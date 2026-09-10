@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `journeys` and `journey` commands that trace frontend, HTTP, scheduled,
+  event, queue, webhook, and declared external consumers through use cases,
+  repositories, mappers, TypeORM entities, database tables, and tests.
+- Added a searchable journey explorer with compact and full canvas modes,
+  component-aware search, confidence levels, source evidence, and graph
+  freshness metadata.
+- Domain-event publications now expand into probable `@OnEvent` effects, and
+  TypeORM repository getters resolve to their injected entity and table.
+  Runtime handler guards and unresolved persistence helpers remain explicit
+  incomplete paths instead of producing a false complete result.
+
 ## [2.3.8] - 2026-08-21
 
 ### Added

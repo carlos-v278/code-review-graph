@@ -101,8 +101,8 @@ LANGUAGE_GAPS: tuple[LanguageGap, ...] = (
         languages=_JS_FAMILY,
         patterns=frozenset({"handlers_of", "endpoints_for"}),
         note=(
-            "js/ts route registration is not indexed and endpoint edges are "
-            "spring-only, so handlers can be missing"
+            "nestjs decorators are indexed, but dynamic and other js/ts route "
+            "registration styles can still leave handlers missing"
         ),
     ),
     LanguageGap(

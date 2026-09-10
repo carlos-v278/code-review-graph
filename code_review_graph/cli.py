@@ -533,6 +533,8 @@ _GRAPH_TOOL_COMMANDS = {
     "search",
     "flows",
     "flow",
+    "journeys",
+    "journey",
     "communities",
     "community",
     "architecture",
@@ -639,6 +641,32 @@ def _run_graph_tool_command(args, repo_root: Path) -> None:
             include_source=args.source,
             repo_root=root,
         )
+    elif args.command in ("journeys", "journey"):
+        from .graph import GraphStore
+        from .incremental import get_db_path
+        from .journeys import build_journeys, format_journeys_text
+
+        try:
+            with GraphStore(get_db_path(repo_root)) as store:
+                result = build_journeys(
+                    store, repo_root, api_prefixes=args.api_prefix,
+                    consumer_manifest=args.consumer_manifest,
+                    consumer_types=args.consumer_type,
+                    confidences=args.confidence, limit=args.limit,
+                    target=getattr(args, "use_case", None),
+                    details=args.details,
+                )
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            raise SystemExit(2) from exc
+        if args.format == "text":
+            print(format_journeys_text(result))
+            if result.get("status") != "ok":
+                raise SystemExit(1)
+            return
+        if result.get("status") != "ok":
+            print(json.dumps(result, indent=2, default=str))
+            raise SystemExit(1)
     elif args.command == "communities":
         result = tools.list_communities_func(
             repo_root=root,
@@ -975,6 +1003,12 @@ def main() -> None:
         help="Rendering mode: auto (default), full, community, or file",
     )
     vis_cmd.add_argument(
+        "--view",
+        choices=["graph", "journeys"],
+        default="graph",
+        help="Visualization view: graph (default) or journeys",
+    )
+    vis_cmd.add_argument(
         "--serve",
         action="store_true",
         help="Start a local HTTP server to view the visualization (localhost:8765)",
@@ -1181,6 +1215,49 @@ def main() -> None:
     flow_selector.add_argument("--name", default=None)
     flow_cmd.add_argument("--source", action="store_true", help="Include source snippets")
     flow_cmd.add_argument("--repo", default=None, help="Repository root (auto-detected)")
+
+    def add_journey_options(command) -> None:
+        command.add_argument(
+            "--format", choices=["text", "json"], default="text",
+            help="Output format (default: text)",
+        )
+        command.add_argument(
+            "--consumer-type", action="append", default=[],
+            choices=[
+                "bot", "cron", "event", "frontend",
+                "http", "queue", "webhook",
+            ],
+            help="Keep journeys with this consumer type (repeatable)",
+        )
+        command.add_argument(
+            "--confidence", action="append", default=[],
+            choices=["confirmed", "probable", "unknown"],
+            help="Keep journeys with this confidence (repeatable)",
+        )
+        command.add_argument(
+            "--api-prefix", action="append", default=[], metavar="PATH",
+            help="API prefix to remove while matching routes (repeatable)",
+        )
+        command.add_argument(
+            "--consumer-manifest", default=None, metavar="YAML",
+            help="Optional YAML declarations for external consumers",
+        )
+        command.add_argument("--limit", type=_positive_int, default=50)
+        command.add_argument(
+            "--details", action="store_true",
+            help="Show complete consumer and repository implementation paths",
+        )
+        command.add_argument("--repo", default=None, help="Repository root (auto-detected)")
+
+    journeys_cmd = sub.add_parser(
+        "journeys", help="List backend use cases and their full-stack consumers",
+    )
+    add_journey_options(journeys_cmd)
+    journey_cmd = sub.add_parser(
+        "journey", help="Show one backend use-case journey",
+    )
+    journey_cmd.add_argument("use_case", help="Use-case name or qualified name")
+    add_journey_options(journey_cmd)
 
     communities_cmd = sub.add_parser("communities", help="List graph communities")
     communities_cmd.add_argument(
@@ -2032,12 +2109,20 @@ def main() -> None:
                 export_svg(store, out)
                 print(f"SVG exported: {out}")
             else:
-                from .visualization import generate_html
+                vis_view = getattr(args, "view", "graph") or "graph"
+                if vis_view == "journeys":
+                    from .journey_visualization import generate_journeys_html
 
-                html_path = data_dir / "graph.html"
-                vis_mode = getattr(args, "mode", "auto") or "auto"
-                generate_html(store, html_path, mode=vis_mode)
-                print(f"Visualization ({vis_mode}): {html_path}")
+                    html_path = data_dir / "journeys.html"
+                    generate_journeys_html(store, repo_root, html_path)
+                    print(f"Visualization (journeys): {html_path}")
+                else:
+                    from .visualization import generate_html
+
+                    html_path = data_dir / "graph.html"
+                    vis_mode = getattr(args, "mode", "auto") or "auto"
+                    generate_html(store, html_path, mode=vis_mode)
+                    print(f"Visualization ({vis_mode}): {html_path}")
                 if getattr(args, "serve", False):
                     import functools
                     import http.server
@@ -2048,7 +2133,7 @@ def main() -> None:
                         http.server.SimpleHTTPRequestHandler,
                         directory=str(serve_dir),
                     )
-                    print(f"Serving at http://localhost:{port}/graph.html")
+                    print(f"Serving at http://localhost:{port}/{html_path.name}")
                     print("Press Ctrl+C to stop.")
                     with http.server.HTTPServer(("localhost", port), http_handler) as httpd:
                         try:
