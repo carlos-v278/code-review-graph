@@ -161,6 +161,31 @@ def test_visualize_json_uses_local_export(tmp_path, capsys):
     store.close.assert_called_once()
 
 
+def test_visualize_journeys_uses_journey_explorer(tmp_path, capsys):
+    argv = [
+        "code-review-graph", "visualize", "--view", "journeys",
+        "--repo", str(tmp_path),
+    ]
+    data_dir = tmp_path / ".code-review-graph"
+    data_dir.mkdir()
+    db_path = data_dir / "graph.db"
+    db_path.touch()
+    store = MagicMock()
+
+    with patch.object(sys, "argv", argv):
+        with patch("code_review_graph.graph.GraphStore", return_value=store):
+            with patch("code_review_graph.incremental.get_db_path", return_value=db_path):
+                with patch("code_review_graph.incremental.get_data_dir", return_value=data_dir):
+                    with patch(
+                        "code_review_graph.journey_visualization.generate_journeys_html",
+                        return_value=data_dir / "journeys.html",
+                    ) as generate:
+                        cli.main()
+
+    generate.assert_called_once_with(store, tmp_path.resolve(), data_dir / "journeys.html")
+    assert "Visualization (journeys):" in capsys.readouterr().out
+
+
 class TestBuildUpdateCommands:
     def test_build_skip_postprocess_does_not_run_extra_cli_postprocess(self):
         argv = [

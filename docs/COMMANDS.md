@@ -1,5 +1,59 @@
 # All Available Commands
 
+## Full-stack journey CLI
+
+```bash
+code-review-graph journeys [--format text|json] [--consumer-type TYPE] \
+  [--confidence LEVEL] [--api-prefix PATH] [--consumer-manifest FILE] \
+  [--details] [--limit N] [--repo PATH]
+code-review-graph journey <use-case> [same options]
+```
+
+`journeys` inventories classes ending in `UseCase` and reports evidence-backed
+HTTP/frontend, cron, queue, event, and webhook entry points, downstream
+repositories, and direct or indirect tests. `journey` selects one exact or
+unambiguous partial name. Multiple matches are reported as ambiguous; the CLI
+never chooses one silently.
+
+`--details` expands every consumer and repository path with its intermediate
+symbols, relations, files, and lines. Repository ports are connected to their
+implementing classes and reachable mapper functions when the graph contains
+that static evidence. Vue callers are traced before the service request.
+Repositories are counted once, with called methods nested below them.
+
+For TypeORM repositories, detailed output also reports statically identified
+entity/table access as `READS_FROM`, `WRITES_TO`, or `READS_WRITES`. Missing
+implementations and unresolved persistence helpers are listed as incomplete
+paths separately from ambiguous HTTP route matches. Getter aliases such as
+`this.repository -> txRepository(this.fallbackRepository)` keep the injected
+entity association.
+
+Domain-event construction is connected to matching `@OnEvent` handlers as a
+probable downstream effect. The detailed path shows the publishing method,
+event class, and handler. Since static analysis cannot evaluate handler guards,
+these paths remain explicitly incomplete.
+
+NestJS routes are matched to `fetch` and Axios-style requests by HTTP method
+and normalized path. `--api-prefix /api` removes a deployment prefix during
+that comparison. Origins, query strings, trailing slashes, `:id`, `{id}`, and
+simple `${id}` template segments are normalized. Dynamic expressions stay
+visible with unknown confidence and are not matched.
+
+External consumers can be declared without MCP in a YAML file:
+
+```yaml
+consumers:
+  - use_case: MarkAccountStrikeUseCase
+    type: bot
+    name: Bobby
+```
+
+A declaration may instead use `method` plus `route`. Supported types are
+`bot`, `cron`, `event`, `frontend`, `http`, `queue`, and `webhook`. The output
+always includes graph commit/branch/freshness, recognized syntax, limitations,
+ambiguities, and truncation state. A stale or unverifiable graph is never
+labelled complete.
+
 ## Skills and Slash Commands
 
 These commands are installed for clients that support project skills or slash-command style workflows.
@@ -379,6 +433,8 @@ code-review-graph watch                        # Auto-update on file changes (re
 code-review-graph visualize                    # Generate interactive HTML graph (requires existing graph)
 code-review-graph visualize --format graphml   # Export GraphML
 code-review-graph visualize --serve            # Serve graph.html on localhost:8765
+code-review-graph visualize --view journeys --serve
+                                                # Search and inspect full-stack journeys in a web UI
 
 # Analysis
 code-review-graph detect-changes               # Risk-scored change analysis (read-only; no empty DB)

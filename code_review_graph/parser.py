@@ -1308,6 +1308,8 @@ _SPRING_EVENT_LISTENER_ANNOTATIONS = frozenset({"EventListener"})
 _SPRING_EVENT_PUBLISH_METHODS = frozenset({"publishEvent"})
 _JAVA_PACKAGE_KEY = "__crg_java_package__"
 _SPRING_REQUEST_PREFIX_KEY = "__crg_spring_request_prefix__:"
+_NESTJS_REQUEST_PREFIX_KEY = "__crg_nestjs_request_prefix__:"
+_TS_STRING_CONSTANT_PREFIX_KEY = "__crg_ts_string_constant__:"
 _JS_IMPORT_ORIGINAL_PREFIX_KEY = "__crg_js_import_original__:"
 _SPRING_REQUEST_MAPPINGS = {
     "DeleteMapping": ("DELETE",),
@@ -1321,6 +1323,14 @@ _SPRING_WEBFLUX_HTTP_VERBS = frozenset({"DELETE", "GET", "PATCH", "POST", "PUT"}
 _HTTP_REQUEST_METHODS = frozenset({
     "CONNECT", "DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT", "TRACE",
 })
+_NESTJS_REQUEST_MAPPINGS = {
+    "Delete": "DELETE",
+    "Get": "GET",
+    "Patch": "PATCH",
+    "Post": "POST",
+    "Put": "PUT",
+}
+_JS_HTTP_CLIENT_METHODS = frozenset({"delete", "get", "patch", "post", "put"})
 
 
 # ---------------------------------------------------------------------------
@@ -6412,6 +6422,10 @@ class CodeParser:
                 and node_type == "call_expression"
             ):
                 self._extract_js_module_call(child, file_path, language, edges)
+                self._emit_javascript_http_request(
+                    child, file_path, language, enclosing_class,
+                    enclosing_func, import_map or {}, nodes, edges,
+                )
 
             # --- JS/TS variable-assigned functions (const foo = () => {}) ---
             if (
@@ -9395,6 +9409,230 @@ class CodeParser:
                         emitted += 1
         return emitted
 
+    @staticmethod
+    def _typescript_decorators(node) -> list:
+        decorators: list = []
+        previous = node.prev_named_sibling
+        while previous is not None and previous.type in ("comment", "decorator"):
+            if previous.type == "decorator":
+                decorators.insert(0, previous)
+            previous = previous.prev_named_sibling
+        return decorators
+
+    @staticmethod
+    def _typescript_decorator_call(decorator) -> tuple[str, list] | None:
+        call = next(
+            (child for child in decorator.named_children
+             if child.type == "call_expression"), None,
+        )
+        if call is None:
+            return None
+        function = call.child_by_field_name("function")
+        arguments = call.child_by_field_name("arguments")
+        if function is None or arguments is None:
+            return None
+        return (
+            function.text.decode("utf-8", errors="replace"),
+            list(arguments.named_children),
+        )
+
+    @staticmethod
+    def _typescript_static_string(
+        node,
+        string_constants: Optional[dict[str, str]] = None,
+    ) -> tuple[str, bool]:
+        text = node.text.decode("utf-8", errors="replace")
+        if node.type == "string" and len(text) >= 2:
+            return text[1:-1], False
+        if node.type == "template_string" and len(text) >= 2:
+            dynamic = False
+            value = text[1:-1]
+            for substitution in node.named_children:
+                if substitution.type != "template_substitution":
+                    continue
+                expression = substitution.text[2:-1].decode(
+                    "utf-8", errors="replace",
+                ).strip()
+                constant = (string_constants or {}).get(
+                    f"{_TS_STRING_CONSTANT_PREFIX_KEY}{expression}",
+                )
+                if constant is not None:
+                    value = value.replace(substitution.text.decode(), constant)
+                elif re.fullmatch(
+                    r"[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*", expression,
+                ):
+                    value = value.replace(substitution.text.decode(), ":param")
+                else:
+                    dynamic = True
+            return value, dynamic
+        return text, True
+
+    def _emit_nestjs_endpoint_nodes(
+        self, method_node, method_name: str, class_name: Optional[str],
+        file_path: str, import_map: dict[str, str], nodes: list[NodeInfo],
+        edges: list[EdgeInfo],
+    ) -> int:
+        prefixes = [""]
+        encoded = import_map.get(
+            f"{_NESTJS_REQUEST_PREFIX_KEY}{class_name or ''}",
+        )
+        if encoded:
+            try:
+                decoded = json.loads(encoded)
+            except (TypeError, ValueError):
+                decoded = None
+            if isinstance(decoded, list) and all(
+                isinstance(item, str) for item in decoded
+            ):
+                prefixes = decoded or [""]
+        source = self._qualify(method_name, file_path, class_name)
+        emitted = 0
+        for decorator in self._typescript_decorators(method_node):
+            parsed = self._typescript_decorator_call(decorator)
+            if parsed is None or parsed[0] not in _NESTJS_REQUEST_MAPPINGS:
+                continue
+            annotation, arguments = parsed
+            route_part, dynamic = "", False
+            if arguments:
+                route_part, dynamic = self._typescript_static_string(
+                    arguments[0], import_map,
+                )
+            for prefix in prefixes:
+                route = self._join_spring_route(prefix, route_part)
+                http_method = _NESTJS_REQUEST_MAPPINGS[annotation]
+                endpoint_name = (
+                    f"{method_name}@{annotation}[{emitted}] "
+                    f"{http_method} {route}"
+                )
+                metadata = {
+                    "annotation": annotation, "direction": "inbound",
+                    "dynamic": dynamic, "framework": "nestjs",
+                    "handler": method_name, "http_method": http_method,
+                    "route": route,
+                }
+                nodes.append(NodeInfo(
+                    kind="Endpoint", name=endpoint_name, file_path=file_path,
+                    line_start=decorator.start_point[0] + 1,
+                    line_end=decorator.end_point[0] + 1,
+                    language="typescript", parent_name=class_name,
+                    extra=metadata,
+                ))
+                edges.append(EdgeInfo(
+                    kind="HANDLES", source=source,
+                    target=self._qualify(endpoint_name, file_path, class_name),
+                    file_path=file_path, line=decorator.start_point[0] + 1,
+                    extra=metadata,
+                ))
+                emitted += 1
+        return emitted
+
+    def _emit_javascript_http_request(
+        self, call_node, file_path: str, language: str,
+        enclosing_class: Optional[str], enclosing_func: Optional[str],
+        import_map: dict[str, str], nodes: list[NodeInfo],
+        edges: list[EdgeInfo],
+    ) -> bool:
+        function = call_node.child_by_field_name("function")
+        arguments = call_node.child_by_field_name("arguments")
+        if function is None or arguments is None:
+            return False
+        while function.type in (
+            "await_expression", "instantiation_expression",
+            "parenthesized_expression",
+        ):
+            candidates = [
+                child for child in function.named_children
+                if child.type in ("identifier", "member_expression")
+            ]
+            if not candidates:
+                return False
+            function = candidates[-1]
+        named_args = list(arguments.named_children)
+        if not named_args:
+            return False
+        function_text = function.text.decode("utf-8", errors="replace")
+        http_method: str | None = None
+        route_node = None
+        client = function_text
+        if function_text == "fetch":
+            http_method, route_node = "GET", named_args[0]
+            if len(named_args) > 1:
+                options = named_args[1].text.decode(
+                    "utf-8", errors="replace",
+                )
+                match = re.search(
+                    r"\bmethod\s*:\s*['\"]([A-Za-z]+)['\"]", options,
+                )
+                if match:
+                    http_method = match.group(1).upper()
+        elif function.type == "member_expression":
+            receiver = function.child_by_field_name("object")
+            property_node = function.child_by_field_name("property")
+            method_name = (
+                property_node.text.decode("utf-8", errors="replace").lower()
+                if property_node is not None else ""
+            )
+            receiver_name = (
+                receiver.text.decode("utf-8", errors="replace")
+                if receiver is not None else ""
+            )
+            if method_name in _JS_HTTP_CLIENT_METHODS and re.search(
+                r"(?:axios|api|http|client)", receiver_name, re.IGNORECASE,
+            ):
+                http_method, route_node, client = (
+                    method_name.upper(), named_args[0], receiver_name,
+                )
+        elif function_text == "axios" and named_args[0].type == "object":
+            config = named_args[0].text.decode("utf-8", errors="replace")
+            method_match = re.search(
+                r"\bmethod\s*:\s*['\"]([A-Za-z]+)['\"]", config,
+            )
+            url_match = re.search(r"\burl\s*:\s*(['\"])(.*?)\1", config)
+            if not method_match or not url_match:
+                return False
+            http_method = method_match.group(1).upper()
+            route_text, route_node = url_match.group(2), None
+        else:
+            return False
+        if http_method not in _HTTP_REQUEST_METHODS:
+            return False
+        if route_node is not None:
+            route_text, dynamic = self._typescript_static_string(
+                route_node, import_map,
+            )
+        else:
+            dynamic = False
+        caller = (
+            self._qualify(enclosing_func, file_path, enclosing_class)
+            if enclosing_func else file_path
+        )
+        ordinal = sum(
+            node.kind == "HttpRequest"
+            and node.line_start == call_node.start_point[0] + 1
+            for node in nodes
+        )
+        request_name = (
+            f"request@L{call_node.start_point[0] + 1}:{ordinal} "
+            f"{http_method} {route_text}"
+        )
+        metadata = {
+            "client": client, "direction": "outbound", "dynamic": dynamic,
+            "http_method": http_method, "route": route_text,
+        }
+        nodes.append(NodeInfo(
+            kind="HttpRequest", name=request_name, file_path=file_path,
+            line_start=call_node.start_point[0] + 1,
+            line_end=call_node.end_point[0] + 1, language=language,
+            parent_name=enclosing_class, extra=metadata,
+        ))
+        edges.append(EdgeInfo(
+            kind="REQUESTS", source=caller,
+            target=self._qualify(request_name, file_path, enclosing_class),
+            file_path=file_path, line=call_node.start_point[0] + 1,
+            extra=metadata,
+        ))
+        return True
+
     def _java_invocation_chain_has_route(self, invocation) -> bool:
         """Return whether a fluent Java invocation is rooted at ``route()``."""
         current = invocation
@@ -10225,6 +10463,13 @@ class CodeParser:
         # and ``extra["decorators"]`` (list).  See: #295
         if language == "java":
             class_decorators = list(class_annotations)
+        elif language in ("javascript", "typescript", "tsx"):
+            class_decorators = [
+                decorator.text.decode(
+                    "utf-8", errors="replace",
+                ).lstrip("@").strip()
+                for decorator in self._typescript_decorators(child)
+            ]
         else:
             class_decorators = _modifier_annotation_names(child)
             if language == "python":
@@ -10236,6 +10481,28 @@ class CodeParser:
         )
         if class_decorators and "decorators" not in extra:
             extra["decorators"] = class_decorators
+        if (
+            language in ("javascript", "typescript", "tsx")
+            and import_map is not None
+        ):
+            controller_paths: list[str] = []
+            for decorator in self._typescript_decorators(child):
+                parsed = self._typescript_decorator_call(decorator)
+                if parsed is None or parsed[0] != "Controller":
+                    continue
+                if parsed[1]:
+                    path, dynamic = self._typescript_static_string(
+                        parsed[1][0], import_map,
+                    )
+                    if not dynamic:
+                        controller_paths.append(path)
+                else:
+                    controller_paths.append("")
+            if controller_paths:
+                import_map[
+                    f"{_NESTJS_REQUEST_PREFIX_KEY}{name}"
+                ] = json.dumps(controller_paths)
+                extra["nestjs_controller"] = True
 
         docstring = self._get_docstring_summary(child, language)
         if docstring:
@@ -10376,6 +10643,13 @@ class CodeParser:
         # See: #295
         if language == "csharp":
             deco_list.extend(_csharp_attribute_names(child))
+        if language in ("javascript", "typescript", "tsx"):
+            deco_list.extend(
+                decorator.text.decode(
+                    "utf-8", errors="replace",
+                ).lstrip("@").strip()
+                for decorator in self._typescript_decorators(child)
+            )
         # PHP: `#[Test]` attributes wrap `attribute_list > attribute_group >
         # attribute > name`. PHPUnit's legacy `/** @test */` docblock tag is
         # a preceding-sibling `comment` node instead, so it needs a separate
@@ -10520,6 +10794,15 @@ class CodeParser:
             if publish_count:
                 method_extra["spring_event_publisher"] = True
                 method_extra["spring_event_publish_count"] = publish_count
+
+        if language in ("javascript", "typescript", "tsx"):
+            endpoint_count = self._emit_nestjs_endpoint_nodes(
+                child, name, enclosing_class, file_path,
+                import_map or {}, nodes, edges,
+            )
+            if endpoint_count:
+                method_extra["nestjs_endpoint"] = True
+                method_extra["nestjs_endpoint_count"] = endpoint_count
 
         # Persist annotations/decorators so consumers can filter on them
         # (e.g. "show me all @Composable functions").  Stored in BOTH
@@ -13043,6 +13326,17 @@ class CodeParser:
                 and node_type in ("lexical_declaration", "variable_declaration")
             ):
                 self._collect_js_require_names(child, import_map)
+                self._collect_ts_string_constants(child, import_map)
+
+            if (
+                language in ("javascript", "typescript", "tsx")
+                and node_type == "export_statement"
+            ):
+                for inner in child.children:
+                    if inner.type in (
+                        "lexical_declaration", "variable_declaration",
+                    ):
+                        self._collect_ts_string_constants(inner, import_map)
 
         if language == "julia":
             self._collect_julia_scoped_import_names(
@@ -13050,6 +13344,34 @@ class CodeParser:
             )
 
         return import_map, defined_names
+
+    @staticmethod
+    def _collect_ts_string_constants(
+        node,
+        import_map: dict[str, str],
+    ) -> None:
+        declaration_text = node.text.decode(
+            "utf-8", errors="replace",
+        ).lstrip()
+        if not declaration_text.startswith("const "):
+            return
+        for declarator in node.named_children:
+            if declarator.type != "variable_declarator":
+                continue
+            name_node = declarator.child_by_field_name("name")
+            value_node = declarator.child_by_field_name("value")
+            if (
+                name_node is None or value_node is None
+                or name_node.type != "identifier"
+                or value_node.type != "string"
+            ):
+                continue
+            raw = value_node.text.decode("utf-8", errors="replace")
+            if len(raw) >= 2:
+                name = name_node.text.decode("utf-8", errors="replace")
+                import_map[
+                    f"{_TS_STRING_CONSTANT_PREFIX_KEY}{name}"
+                ] = raw[1:-1]
 
     def _collect_julia_scoped_import_names(
         self,

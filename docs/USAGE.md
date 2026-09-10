@@ -81,6 +81,30 @@ open .code-review-graph/graph.html
 ```
 Interactive D3.js force-directed graph. Starts collapsed (File nodes only) — click a file to expand its children. Use the search bar to filter, and click legend edge types to toggle visibility.
 
+### 5a. Trace frontend-to-backend journeys (optional)
+
+```bash
+code-review-graph journeys --api-prefix /api
+code-review-graph journey GetAccountUseCase --format json --api-prefix /api
+code-review-graph journey GetAccountUseCase --details --api-prefix /api
+code-review-graph visualize --view journeys --serve
+```
+
+These commands work directly from the CLI; MCP setup is not required. They
+include a searchable web explorer with a compact Essential view and a pannable,
+zoomable Complete view from frontend components to database tables. They combine
+NestJS controller routes, `fetch`/Axios requests, typed call edges,
+repositories, and tests into one journey per `*UseCase`. Runtime-only or
+dynamic wiring remains explicitly unknown. Use `--consumer-manifest FILE` for
+known external bots or other consumers that have no repository-local caller.
+Use `--details` to expand the frontend/controller/use-case path and follow
+repository ports into their static implementation and mapper call paths. Vue
+callers are included before the service, while TypeORM `@Entity` metadata adds
+the ORM entity and table read/write evidence. Published domain events also show
+matching `@OnEvent` handlers as probable effects; runtime guards stay marked as
+incomplete. Repository totals count distinct
+ports; unresolved implementations and route ambiguities are reported separately.
+
 ### 6. Semantic search (optional)
 ```bash
 pip install "code-review-graph[embeddings]"
@@ -149,8 +173,8 @@ Languages not covered yet can be added without a fork via a `.code-review-graph/
 
 ## What Gets Indexed
 
-- **Nodes**: Files, Classes, Functions/Methods, Types, Tests — plus Endpoints, Schedulers and ConfigProperties where framework enrichment applies
-- **Edges**: CALLS, IMPORTS_FROM, INHERITS, IMPLEMENTS, CONTAINS, TESTED_BY, DEPENDS_ON, REFERENCES — plus framework-specific kinds (INJECTS, HANDLES, TRIGGERS, PUBLISHES, CONSUMES/PRODUCES, DEPENDS_ON_CONFIG, TEMPORAL_STUB)
+- **Nodes**: Files, Classes, Functions/Methods, Types, Tests — plus Endpoints, outbound HttpRequests, Schedulers and ConfigProperties where framework enrichment applies
+- **Edges**: CALLS, IMPORTS_FROM, INHERITS, IMPLEMENTS, CONTAINS, TESTED_BY, DEPENDS_ON, REFERENCES — plus framework-specific kinds (INJECTS, HANDLES, REQUESTS, TRIGGERS, PUBLISHES, CONSUMES/PRODUCES, DEPENDS_ON_CONFIG, TEMPORAL_STUB)
 
 See [schema.md](schema.md) for full details.
 
