@@ -355,6 +355,7 @@ class TestChanges:
         assert "changed_functions" in result
         assert "affected_flows" in result
         assert "test_gaps" in result
+        assert "test_coverage" in result
         assert "review_priorities" in result
 
     def test_analyze_changes_risk_score_range(self):
@@ -386,6 +387,38 @@ class TestChanges:
         assert "untested_a" in gap_names
         assert "untested_b" in gap_names
         assert "tested_c" not in gap_names
+
+    def test_analyze_classifies_direct_indirect_and_missing_tests(self):
+        self._add_func("direct", path="app.py", line_start=1, line_end=10)
+        self._add_func("indirect", path="app.py", line_start=15, line_end=25)
+        self._add_func("missing", path="app.py", line_start=30, line_end=40)
+        self._add_func("dependency", path="dependency.py")
+        self._add_func("test_direct", path="test_app.py", is_test=True)
+        self._add_func("test_dependency", path="test_dependency.py", is_test=True)
+        self._add_tested_by(
+            "app.py::direct", "test_app.py::test_direct", "test_app.py",
+        )
+        self._add_call("app.py::indirect", "dependency.py::dependency")
+        self._add_tested_by(
+            "dependency.py::dependency",
+            "test_dependency.py::test_dependency",
+            "test_dependency.py",
+        )
+
+        result = analyze_changes(
+            self.store,
+            changed_files=["app.py"],
+            changed_ranges={"app.py": [(1, 40)]},
+        )
+
+        coverage = {
+            item["name"]: item for item in result["test_coverage"]
+        }
+        assert coverage["direct"]["classification"] == "direct"
+        assert coverage["indirect"]["classification"] == "indirect_only"
+        assert coverage["missing"]["classification"] == "none"
+        assert "Indirect-only tests: indirect" in result["summary"]
+        assert "Untested: missing" in result["summary"]
 
     def test_analyze_changes_with_flows(self):
         """analyze_changes detects affected flows."""
@@ -486,6 +519,21 @@ class TestChanges:
         # Should still find functions even without ranges.
         assert len(result["changed_functions"]) >= 1
 
+    def test_analyze_includes_changed_files_missing_from_diff_ranges(self):
+        self._add_func("tracked", path="tracked.py", line_start=1, line_end=10)
+        self._add_func("untracked", path="untracked.py", line_start=1, line_end=10)
+
+        result = analyze_changes(
+            self.store,
+            changed_files=["tracked.py", "untracked.py"],
+            changed_ranges={"tracked.py": [(1, 10)]},
+        )
+
+        assert {item["name"] for item in result["changed_functions"]} == {
+            "tracked",
+            "untracked",
+        }
+
     # ---------------------------------------------------------------
     # detect_changes_func (integration)
     # ---------------------------------------------------------------
@@ -494,12 +542,13 @@ class TestChanges:
         """detect_changes_func returns clean result when no changes detected."""
         from code_review_graph.tools import detect_changes_func
 
-        # Patch _get_store to use our test store,
-        # and get_changed_files/get_staged_and_unstaged to return empty.
+        # Patch _get_store to use our test store and return no changed files.
         with (
             patch("code_review_graph.tools.review._get_store") as mock_get_store,
-            patch("code_review_graph.tools.review.get_changed_files", return_value=[]),
-            patch("code_review_graph.tools.review.get_staged_and_unstaged", return_value=[]),
+            patch(
+                "code_review_graph.tools.review.get_all_changed_files",
+                return_value=[],
+            ),
             # Prevent the tool from closing our shared store, then restore the
             # real method so teardown releases the database handle on Windows.
             patch.object(self.store, "close"),
@@ -521,7 +570,10 @@ class TestChanges:
 
         with (
             patch("code_review_graph.tools.review._get_store") as mock_get_store,
-            patch("code_review_graph.tools.review.get_changed_files", return_value=["app.py"]),
+            patch(
+                "code_review_graph.tools.review.get_all_changed_files",
+                return_value=["app.py"],
+            ),
             patch(
                 "code_review_graph.tools.review.parse_git_diff_ranges",
                 return_value={"app.py": [(1, 10)]},

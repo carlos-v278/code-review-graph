@@ -70,6 +70,10 @@ def _run_postprocess(
     """
     warnings: list[str] = []
     build_result["postprocess_level"] = postprocess
+    store.set_metadata("postprocess_level", postprocess)
+    if postprocess != "full":
+        store.set_metadata("flows_status", "not_computed")
+        store.set_metadata("communities_status", "not_computed")
 
     if postprocess == "none":
         _run_embedding_refresh(
@@ -157,6 +161,7 @@ def _run_postprocess(
     use_incremental = not full_rebuild and bool(changed_files)
 
     stage_started = time.perf_counter()
+    store.set_metadata("flows_status", "not_computed")
     try:
         if use_incremental:
             from code_review_graph.flows import incremental_trace_flows
@@ -169,7 +174,9 @@ def _run_postprocess(
             flows = _trace_flows(store)
             count = _store_flows(store, flows)
         build_result["flows_detected"] = count
+        store.set_metadata("flows_status", "computed")
     except (sqlite3.OperationalError, ImportError) as e:
+        store.set_metadata("flows_status", "failed")
         logger.warning("Flow detection failed: %s", e)
         warnings.append(f"Flow detection failed: {type(e).__name__}: {e}")
     timing["flows_s"] = max(
@@ -178,6 +185,7 @@ def _run_postprocess(
     )
 
     stage_started = time.perf_counter()
+    store.set_metadata("communities_status", "not_computed")
     try:
         if use_incremental:
             from code_review_graph.communities import (
@@ -196,7 +204,9 @@ def _run_postprocess(
             comms = _detect_communities(store)
             count = _store_communities(store, comms)
         build_result["communities_detected"] = count
+        store.set_metadata("communities_status", "computed")
     except (sqlite3.OperationalError, ImportError) as e:
+        store.set_metadata("communities_status", "failed")
         logger.warning("Community detection failed: %s", e)
         warnings.append(f"Community detection failed: {type(e).__name__}: {e}")
     timing["communities_s"] = max(
@@ -653,6 +663,7 @@ def run_postprocess(
                 warnings.append(f"FTS index rebuild failed: {type(e).__name__}: {e}")
 
         if flows:
+            store.set_metadata("flows_status", "not_computed")
             try:
                 from code_review_graph.flows import store_flows as _store_flows
                 from code_review_graph.flows import trace_flows as _trace_flows
@@ -660,12 +671,15 @@ def run_postprocess(
                 traced = _trace_flows(store)
                 count = _store_flows(store, traced)
                 result["flows_detected"] = count
+                store.set_metadata("flows_status", "computed")
             except (sqlite3.OperationalError, ImportError) as e:
+                store.set_metadata("flows_status", "failed")
                 store.rollback()
                 logger.warning("Flow detection failed: %s", e)
                 warnings.append(f"Flow detection failed: {type(e).__name__}: {e}")
 
         if communities:
+            store.set_metadata("communities_status", "not_computed")
             try:
                 from code_review_graph.communities import (
                     detect_communities as _detect_communities,
@@ -677,7 +691,9 @@ def run_postprocess(
                 comms = _detect_communities(store)
                 count = _store_communities(store, comms)
                 result["communities_detected"] = count
+                store.set_metadata("communities_status", "computed")
             except (sqlite3.OperationalError, ImportError) as e:
+                store.set_metadata("communities_status", "failed")
                 store.rollback()
                 logger.warning("Community detection failed: %s", e)
                 warnings.append(f"Community detection failed: {type(e).__name__}: {e}")
@@ -693,6 +709,10 @@ def run_postprocess(
         store.set_metadata(
             "last_postprocessed_at",
             time.strftime("%Y-%m-%dT%H:%M:%S"),
+        )
+        store.set_metadata(
+            "postprocess_level",
+            "full" if flows and communities else "partial",
         )
         result["summary"] = "Post-processing complete."
         if warnings:

@@ -11,7 +11,7 @@ from ..context_savings import attach_context_savings, estimate_file_tokens
 from ..flows import get_affected_flows as _get_affected_flows
 from ..graph import edge_to_dict, node_to_dict
 from ..hints import generate_hints, get_session
-from ..incremental import get_changed_files, get_staged_and_unstaged
+from ..incremental import get_all_changed_files
 from ..parser import normalize_file_path
 from ._common import (
     _bounded,
@@ -142,9 +142,7 @@ def get_review_context(
     try:
         # Get impact radius first
         if changed_files is None:
-            changed_files = get_changed_files(root, base)
-            if not changed_files:
-                changed_files = get_staged_and_unstaged(root)
+            changed_files = get_all_changed_files(root, base)
 
         if not changed_files:
             return {
@@ -463,9 +461,7 @@ def get_affected_flows_func(
     store, root = _get_store(repo_root)
     try:
         if changed_files is None:
-            changed_files = get_changed_files(root, base)
-            if not changed_files:
-                changed_files = get_staged_and_unstaged(root)
+            changed_files = get_all_changed_files(root, base)
 
         if not changed_files:
             return {
@@ -570,9 +566,7 @@ def detect_changes_func(
     try:
         # Detect changed files if not provided.
         if changed_files is None:
-            changed_files = get_changed_files(root, base)
-            if not changed_files:
-                changed_files = get_staged_and_unstaged(root)
+            changed_files = get_all_changed_files(root, base)
 
         if not changed_files:
             return {
@@ -582,6 +576,7 @@ def detect_changes_func(
                 "changed_functions": [],
                 "affected_flows": [],
                 "test_gaps": [],
+                "test_coverage": [],
                 "review_priorities": [],
             }
 
@@ -647,6 +642,18 @@ def detect_changes_func(
                 "risk_score": analysis.get("risk_score", 0.0),
                 "changed_file_count": len(changed_files),
                 "test_gap_count": len(analysis.get("test_gaps", [])),
+                "direct_test_count": sum(
+                    item.get("classification") == "direct"
+                    for item in analysis.get("test_coverage", [])
+                ),
+                "indirect_only_test_count": sum(
+                    item.get("classification") == "indirect_only"
+                    for item in analysis.get("test_coverage", [])
+                ),
+                "untested_count": sum(
+                    item.get("classification") == "none"
+                    for item in analysis.get("test_coverage", [])
+                ),
                 "review_priorities": top_priorities,
             }
         else:
@@ -658,6 +665,10 @@ def detect_changes_func(
                 analysis.get("test_gaps", []),
                 max_results, _MAX_CHANGED_FUNCTIONS,
             )
+            coverage, coverage_total, coverage_cut = _bounded(
+                analysis.get("test_coverage", []),
+                max_results, _MAX_CHANGED_FUNCTIONS,
+            )
             flows, flows_total, flows_cut = _bounded(
                 analysis.get("affected_flows", []),
                 max_flows, _MAX_DETECT_FLOWS,
@@ -665,7 +676,9 @@ def detect_changes_func(
             files, files_total, files_cut = _bounded(
                 changed_files, max_results, _MAX_REVIEW_FILES,
             )
-            any_cut = funcs_cut or gaps_cut or flows_cut or files_cut
+            any_cut = (
+                funcs_cut or gaps_cut or coverage_cut or flows_cut or files_cut
+            )
             summary = analysis.get("summary", "")
             if any_cut:
                 summary += (
@@ -684,6 +697,8 @@ def detect_changes_func(
                 "changed_functions_total": funcs_total,
                 "test_gaps": gaps,
                 "test_gaps_total": gaps_total,
+                "test_coverage": coverage,
+                "test_coverage_total": coverage_total,
                 "affected_flows": _project(flows, _DETECT_FLOW_FIELDS),
                 "affected_flows_total": flows_total,
                 "truncated": any_cut,

@@ -79,6 +79,18 @@ def format_journeys_text(result: dict[str, Any]) -> str:
         lines.append("Output truncated; raise --limit to show more.")
     if result.get("query", {}).get("details_notice"):
         lines.append(result["query"]["details_notice"])
+    coverage = result.get("changed_file_coverage", {})
+    if coverage.get("unmatched"):
+        lines.append(
+            f"Unmatched changed files: {coverage['unmatched']} "
+            "(manual review required)"
+        )
+        for file_path in coverage.get("unmatched_files", []):
+            lines.append(f"  - {file_path}")
+        if coverage.get("unmatched_files_hidden"):
+            lines.append(
+                f"  +{coverage['unmatched_files_hidden']} unmatched files hidden"
+            )
 
     for journey in result.get("journeys", []):
         lines.append(f"\n{journey['name']} [{journey['domain']}]")
@@ -158,7 +170,8 @@ def format_journeys_text(result: dict[str, Any]) -> str:
                 )
             )
         for incomplete in journey.get("incomplete_paths", []):
+            subject = incomplete.get("symbol") or incomplete.get("kind") or "unknown"
             lines.append(
-                f"  incomplete: {incomplete['symbol']} — {incomplete['reason']}"
+                f"  incomplete: {subject} — {incomplete.get('reason', 'unknown reason')}"
             )
     return "\n".join(lines)

@@ -317,7 +317,7 @@ def route_selection_matches(
                     normalized_route, normalized_query,
                 )
                 if exact_method else
-                normalized_route.startswith(normalized_query)
+                paths_match(normalized_route, normalized_query)
             )
             if matches_query:
                 matches.append({
@@ -327,7 +327,7 @@ def route_selection_matches(
                     "route": route,
                     "reason": (
                         "exact method and route match" if exact_method
-                        else "route prefix match"
+                        else "route match"
                     ),
                 })
                 break

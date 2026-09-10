@@ -959,6 +959,13 @@ def get_staged_and_unstaged(repo_root: Path) -> list[str]:
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return []
 
+
+def get_all_changed_files(repo_root: Path, base: str = "HEAD~1") -> list[str]:
+    """Return the ordered union of base-diff and working-tree changes."""
+    diff_files = get_changed_files(repo_root, base)
+    working_tree_files = get_staged_and_unstaged(repo_root)
+    return list(dict.fromkeys([*diff_files, *working_tree_files]))
+
 def get_all_tracked_files(
     repo_root: Path,
     recurse_submodules: bool | None = None,
@@ -1401,7 +1408,7 @@ def incremental_update(
 
     # Determine changed files
     if changed_files is None:
-        changed_files = get_changed_files(repo_root, base)
+        changed_files = get_all_changed_files(repo_root, base)
     stale_files = _reconcile_stale_files(repo_root, store) if reconcile_stale else []
 
     if not changed_files and not stale_files:

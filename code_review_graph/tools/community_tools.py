@@ -85,6 +85,17 @@ def list_communities_func(
 
     store, root = _get_store(repo_root)
     try:
+        if store.get_metadata("communities_status") == "not_computed":
+            return {
+                "status": "not_computed",
+                "summary": (
+                    "Communities were not computed. Run "
+                    "`code-review-graph postprocess --repo .`."
+                ),
+                "communities": [],
+                "total": None,
+                "truncated": False,
+            }
         communities, total, truncated = _bounded(
             get_communities(store, sort_by=sort_by, min_size=min_size),
             max_results,
@@ -287,6 +298,19 @@ def get_architecture_overview_func(
 
     store, root = _get_store(repo_root)
     try:
+        if store.get_metadata("communities_status") == "not_computed":
+            return {
+                "status": "not_computed",
+                "summary": (
+                    "Architecture communities were not computed. Run "
+                    "`code-review-graph postprocess --repo .`."
+                ),
+                "communities": [],
+                "cross_community_edges": [],
+                "warnings": [],
+                "cross_community_edges_total": None,
+                "truncated": False,
+            }
         full_overview = get_architecture_overview(store)
         overview = full_overview
         if detail_level == "minimal":
