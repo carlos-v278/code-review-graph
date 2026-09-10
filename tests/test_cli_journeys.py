@@ -34,7 +34,49 @@ def test_journeys_forwards_filters_as_json(tmp_path, monkeypatch, capsys):
         "api_prefixes": ["/api"], "consumer_manifest": "consumers.yaml",
         "consumer_types": ["frontend"], "confidences": ["confirmed"],
         "limit": 7, "target": None, "details": True,
+        "max_depth": 4, "max_consumers": 10, "max_tests": 20,
+        "source_file": None, "source_component": None, "source_route": None,
+        "changed_files": None,
     }
+
+
+def test_journeys_affected_forwards_git_diff(tmp_path, monkeypatch, capsys):
+    repo = _repo(tmp_path, monkeypatch)
+    result = {"status": "ok", "journeys": [], "total": 0, "shown": 0}
+    argv = [
+        "code-review-graph", "journeys-affected", "--base", "origin/dev",
+        "--format", "json", "--repo", str(repo),
+    ]
+    with patch.object(sys, "argv", argv):
+        with patch(
+            "code_review_graph.incremental.get_changed_files",
+            return_value=["frontend/src/OrganizationsPage.vue"],
+        ) as changed:
+            with patch(
+                "code_review_graph.journeys.build_journeys", return_value=result,
+            ) as build:
+                cli.main()
+    assert json.loads(capsys.readouterr().out) == result
+    changed.assert_called_once_with(repo.resolve(), "origin/dev")
+    assert build.call_args.kwargs["changed_files"] == [
+        "frontend/src/OrganizationsPage.vue",
+    ]
+
+
+def test_journeys_forwards_component_search(tmp_path, monkeypatch, capsys):
+    repo = _repo(tmp_path, monkeypatch)
+    result = {"status": "ok", "journeys": [], "total": 0, "shown": 0}
+    argv = [
+        "code-review-graph", "journeys", "--from-component",
+        "OrganizationsPage", "--format", "json", "--repo", str(repo),
+    ]
+    with patch.object(sys, "argv", argv):
+        with patch(
+            "code_review_graph.journeys.build_journeys", return_value=result,
+        ) as build:
+            cli.main()
+    assert json.loads(capsys.readouterr().out) == result
+    assert build.call_args.kwargs["source_component"] == "OrganizationsPage"
 
 
 def test_journey_outputs_text(tmp_path, monkeypatch, capsys):

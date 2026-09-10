@@ -55,3 +55,31 @@ def test_non_http_get_calls_are_not_reported_as_requests(tmp_path: Path) -> None
         b"export function lookup(cache) { return cache.get('account'); }",
     )
     assert not [node for node in nodes if node.kind == "HttpRequest"]
+
+
+def test_resolves_local_url_from_static_class_path(tmp_path: Path) -> None:
+    source = b"""
+export class AdminOrganizationsService {
+  private static readonly BASE_PATH = '/admin/organizations';
+
+  static async getOrganizations(filters: URLSearchParams) {
+    const url = `${AdminOrganizationsService.BASE_PATH}?${filters.toString()}`;
+    return api.get(url);
+  }
+}
+
+export function unrelated() {
+  const url = '/wrong-scope';
+  return api.get(url);
+}
+"""
+    nodes, _ = CodeParser().parse_bytes(
+        tmp_path / "admin-organizations.service.ts", source,
+    )
+    requests = [node for node in nodes if node.kind == "HttpRequest"]
+    assert len(requests) == 2
+    organization = next(
+        item for item in requests
+        if item.extra["route"].startswith("/admin/organizations?")
+    )
+    assert organization.extra["dynamic"] is False

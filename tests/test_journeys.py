@@ -3,7 +3,11 @@ from pathlib import Path
 import pytest
 
 from code_review_graph.graph import GraphStore
-from code_review_graph.journeys import build_journeys, normalize_http_path
+from code_review_graph.journeys import (
+    build_journeys,
+    format_journeys_text,
+    normalize_http_path,
+)
 from code_review_graph.parser import EdgeInfo, NodeInfo
 
 
@@ -141,6 +145,9 @@ def test_combines_frontend_cron_repository_and_tests(tmp_path: Path) -> None:
         store.close()
     journey = result["journeys"][0]
     assert {item["type"] for item in journey["consumers"]} == {"cron", "frontend"}
+    assert next(
+        item for item in journey["consumers"] if item["type"] == "cron"
+    )["name"] == "MaterializeSessionsCron"
     assert len(journey["repositories"]) == 1
     assert journey["repositories"][0]["confidence"] == "confirmed"
     assert journey["tests"][0]["coverage"] == "direct"
@@ -248,15 +255,25 @@ def test_reports_domain_event_handlers_as_probable_effects(tmp_path: Path) -> No
         result = build_journeys(
             store, root, target="GetAccountUseCase", details=True,
         )
+        compact = build_journeys(store, root, target="GetAccountUseCase")
     finally:
         store.close()
     journey = result["journeys"][0]
     assert journey["effects"][0]["name"] == "OnAccountChangedHandler"
+    assert journey["effects"][0]["link"]["conditional"] is True
+    assert journey["effects"][0]["confidence"] == "probable"
+    assert journey["effects"][0]["path"][1]["via"]["conditional"] is True
+    assert not any(
+        item["name"] == "OnAccountChangedHandler"
+        for item in journey["consumers"]
+    )
     assert [step["via"]["relation"] for step in journey["effects"][0]["path"][1:]] == [
         "publishes", "handled_by",
     ]
     assert journey["analysis_status"] == "incomplete"
     assert journey["incomplete_paths"][0]["kind"] == "event_dispatch"
+    assert compact["journeys"][0]["effects"] == []
+    assert compact["journeys"][0]["hidden"]["effects"] == 1
 
 
 def test_manifest_declares_bot_but_name_alone_does_not(tmp_path: Path) -> None:
@@ -291,3 +308,108 @@ def test_invalid_manifest_is_explicit(tmp_path: Path) -> None:
             build_journeys(store, root, consumer_manifest=str(manifest))
     finally:
         store.close()
+
+
+def test_groups_tests_and_does_not_claim_behavior_coverage(tmp_path: Path) -> None:
+    store, root = _fixture(tmp_path)
+    indirect_file = root / "backend/src/get.integration.spec.ts"
+    candidate_file = root / "backend/src/get.candidate.spec.ts"
+    indirect = _node("Test", "it:integrates@L10", indirect_file)
+    store.upsert_node(indirect)
+    direct_qn = _qn(root / "backend/src/get.use-case.spec.ts", "it:loads@L10")
+    store.upsert_edge(EdgeInfo(
+        "CALLS", _qn(indirect_file, "it:integrates@L10"), direct_qn,
+        str(indirect_file), 12,
+    ))
+    candidate_file.parent.mkdir(parents=True, exist_ok=True)
+    candidate_file.write_text(
+        "describe('candidate', () => GetAccountUseCase);\n", encoding="utf-8",
+    )
+    store.upsert_node(_node("Test", "it:candidate@L10", candidate_file))
+    try:
+        result = build_journeys(
+            store, root, target="GetAccountUseCase", details=True,
+        )
+    finally:
+        store.close()
+    groups = result["journeys"][0]["test_files"]
+    assert {group["classification"] for group in groups} == {
+        "direct", "indirect", "candidate",
+    }
+    assert all("not proven" in group["coverage_claim"] for group in groups)
+
+
+def test_filters_journeys_from_component_file_and_route(tmp_path: Path) -> None:
+    store, root = _fixture(tmp_path)
+    component = "frontend/src/components/AccountPanel.vue"
+    try:
+        by_component = build_journeys(
+            store, root, api_prefixes=["/api"], source_component="AccountPanel",
+        )
+        by_file = build_journeys(
+            store, root, api_prefixes=["/api"], source_file=component,
+        )
+        by_diff = build_journeys(
+            store, root, api_prefixes=["/api"], changed_files=[component],
+        )
+        by_route = build_journeys(
+            store, root, api_prefixes=["/api"],
+            source_route="/support/accounts",
+        )
+    finally:
+        store.close()
+    assert [item["name"] for item in by_component["journeys"]] == [
+        "GetAccountUseCase",
+    ]
+    assert by_file["total"] == by_diff["total"] == by_route["total"] == 1
+    assert by_diff["journeys"][0]["selection"][0]["reason"] in {
+        "upstream graph dependency", "frontend route path",
+    }
+
+
+def test_ambiguous_route_lists_candidates_with_evidence(tmp_path: Path) -> None:
+    store, root = _fixture(tmp_path)
+    other = root / "backend/src/controllers/other.controller.ts"
+    endpoint_name = "detail@Get[0] GET /support/accounts/:accountId"
+    store.upsert_node(_node(
+        "Endpoint", endpoint_name, other, "OtherController",
+        http_method="GET", route="/support/accounts/:accountId", dynamic=False,
+    ))
+    try:
+        result = build_journeys(
+            store, root, api_prefixes=["/api"],
+            target="GetAccountUseCase", details=True,
+        )
+        compact = build_journeys(
+            store, root, api_prefixes=["/api"], target="GetAccountUseCase",
+        )
+    finally:
+        store.close()
+    ambiguity = result["journeys"][0]["ambiguities"][0]
+    assert ambiguity["candidate_count"] == 2
+    assert {item["name"] for item in ambiguity["candidates"]} == {
+        "SupportController", "OtherController",
+    }
+    assert all(item["evidence"]["file"] for item in ambiguity["candidates"])
+    assert compact["journeys"][0]["ambiguities"][0]["candidates"][0][
+        "evidence"
+    ]["file"]
+    rendered = format_journeys_text(result)
+    assert "ambiguous route" in rendered
+    assert "candidate: GET /support/accounts" in rendered
+
+
+def test_compact_output_is_bounded_and_reports_hidden_items(tmp_path: Path) -> None:
+    store, root = _fixture(tmp_path)
+    try:
+        result = build_journeys(
+            store, root, api_prefixes=["/api"], target="GetAccountUseCase",
+            max_consumers=1, max_tests=1,
+        )
+    finally:
+        store.close()
+    journey = result["journeys"][0]
+    assert len(journey["consumers"]) == 1
+    assert journey["hidden"]["consumers"] == 1
+    assert "path" not in journey["consumers"][0]
+    assert len(journey["tests"]) == 1

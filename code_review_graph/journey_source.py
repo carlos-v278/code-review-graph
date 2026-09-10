@@ -22,6 +22,9 @@ def read_node_source(node: GraphNode, cache: dict[str, list[str]]) -> str:
 
 def relative_path(file_path: str, root: Path) -> str:
     try:
-        return Path(file_path).resolve().relative_to(root.resolve()).as_posix()
+        return Path(file_path).relative_to(root).as_posix()
     except (OSError, ValueError):
-        return file_path.replace("\\", "/")
+        try:
+            return Path(file_path).resolve().relative_to(root.resolve()).as_posix()
+        except (OSError, ValueError):
+            return file_path.replace("\\", "/")

@@ -4,6 +4,12 @@
 
 ### Added
 
+- Added `journeys-affected` for Git diffs and `journeys --from-file`,
+  `--from-component`, and `--from-route` for focused workflow analysis.
+- Journey output now shows direct consumers, repositories, and tests first.
+  `--details` expands bounded indirect dependencies with depth, relationship
+  reason, conditional event status, and grouped direct/indirect/candidate tests.
+
 - Added `journeys` and `journey` commands that trace frontend, HTTP, scheduled,
   event, queue, webhook, and declared external consumers through use cases,
   repositories, mappers, TypeORM entities, database tables, and tests.
@@ -14,6 +20,14 @@
   TypeORM repository getters resolve to their injected entity and table.
   Runtime handler guards and unresolved persistence helpers remain explicit
   incomplete paths instead of producing a false complete result.
+
+### Fixed
+
+- Frontend requests assigned to local variables now resolve static class URL
+  constants, restoring paths such as `OrganizationsPage` through
+  `AdminOrganizationsService` to `ListOrganizationsUseCase`.
+- Ambiguous frontend/backend route matches now list bounded candidates with
+  file-and-line evidence instead of only reporting an ambiguity count.
 
 ## [2.3.8] - 2026-08-21
 

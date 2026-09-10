@@ -49,14 +49,24 @@ def paths_match(left: str, right: str) -> bool:
 
 
 def entry_type(node: GraphNode) -> str | None:
-    if node.is_test or node.kind not in ("Class", "Function"):
+    relative = node.file_path.replace("\\", "/").casefold()
+    if (
+        node.is_test
+        or node.kind not in ("Class", "Function")
+        or node.name == "constructor"
+        or re.search(
+            r"(?:^|/)(?:test|tests|__tests__)(?:/|$)|\.(?:spec|test)\.",
+            relative,
+        )
+    ):
         return None
     decorator_names = " ".join(
         str(value).split("(", 1)[0]
         for value in node.extra.get("decorators", [])
     )
+    local_path = Path(node.file_path).name
     haystack = " ".join((
-        node.name, node.parent_name or "", node.file_path, decorator_names,
+        node.name, node.parent_name or "", local_path, decorator_names,
     )).casefold()
     if "cron" in haystack or "scheduler" in haystack:
         return "cron"

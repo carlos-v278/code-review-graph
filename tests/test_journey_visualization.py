@@ -47,6 +47,9 @@ def test_generate_journeys_html_embeds_complete_details(tmp_path):
     assert "[['essential','Essentiel'],['complete','Complet']]" in content
     assert "function graphForJourney(journey)" in content
     assert "function fullGraphForJourney(journey)" in content
+    assert "includeIndirect = false" in content
+    assert ".canvas-edge.conditional" in content
+    assert "journey.indirect?.consumers" in content
     assert "Glisser · molette" in content
     assert "['Vue / UI', 'Client API / HTTP', 'Controllers', 'Use case'" in content
     assert "viewMode = 'essential'; renderDetail" in content

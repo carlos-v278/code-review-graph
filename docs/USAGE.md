@@ -87,6 +87,10 @@ Interactive D3.js force-directed graph. Starts collapsed (File nodes only) — c
 code-review-graph journeys --api-prefix /api
 code-review-graph journey GetAccountUseCase --format json --api-prefix /api
 code-review-graph journey GetAccountUseCase --details --api-prefix /api
+code-review-graph journeys --from-component OrganizationsPage --details
+code-review-graph journeys --from-file frontend/src/views/OrganizationsPage.vue
+code-review-graph journeys --from-route /admin/organizations
+code-review-graph journeys-affected --base origin/dev
 code-review-graph visualize --view journeys --serve
 ```
 
@@ -97,13 +101,17 @@ NestJS controller routes, `fetch`/Axios requests, typed call edges,
 repositories, and tests into one journey per `*UseCase`. Runtime-only or
 dynamic wiring remains explicitly unknown. Use `--consumer-manifest FILE` for
 known external bots or other consumers that have no repository-local caller.
-Use `--details` to expand the frontend/controller/use-case path and follow
+The default is a bounded summary of direct relationships. Use `--details` to
+expand indirect relationships with depth and reason, the frontend/controller/use-case path, and follow
 repository ports into their static implementation and mapper call paths. Vue
 callers are included before the service, while TypeORM `@Entity` metadata adds
 the ORM entity and table read/write evidence. Published domain events also show
 matching `@OnEvent` handlers as probable effects; runtime guards stay marked as
 incomplete. Repository totals count distinct
 ports; unresolved implementations and route ambiguities are reported separately.
+Ambiguous routes include their candidates and source evidence. Tests are
+grouped by file as direct, indirect, or candidate; discovery is relationship
+evidence and does not prove behavior coverage.
 
 ### 6. Semantic search (optional)
 ```bash

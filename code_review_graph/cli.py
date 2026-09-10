@@ -535,6 +535,7 @@ _GRAPH_TOOL_COMMANDS = {
     "flow",
     "journeys",
     "journey",
+    "journeys-affected",
     "communities",
     "community",
     "architecture",
@@ -641,9 +642,9 @@ def _run_graph_tool_command(args, repo_root: Path) -> None:
             include_source=args.source,
             repo_root=root,
         )
-    elif args.command in ("journeys", "journey"):
+    elif args.command in ("journeys", "journey", "journeys-affected"):
         from .graph import GraphStore
-        from .incremental import get_db_path
+        from .incremental import get_changed_files, get_db_path
         from .journeys import build_journeys, format_journeys_text
 
         try:
@@ -655,6 +656,16 @@ def _run_graph_tool_command(args, repo_root: Path) -> None:
                     confidences=args.confidence, limit=args.limit,
                     target=getattr(args, "use_case", None),
                     details=args.details,
+                    max_depth=args.depth,
+                    max_consumers=args.max_consumers,
+                    max_tests=args.max_tests,
+                    source_file=getattr(args, "from_file", None),
+                    source_component=getattr(args, "from_component", None),
+                    source_route=getattr(args, "from_route", None),
+                    changed_files=(
+                        get_changed_files(repo_root, args.base)
+                        if args.command == "journeys-affected" else None
+                    ),
                 )
         except ValueError as exc:
             print(f"Error: {exc}", file=sys.stderr)
@@ -1244,6 +1255,18 @@ def main() -> None:
         )
         command.add_argument("--limit", type=_positive_int, default=50)
         command.add_argument(
+            "--depth", type=_positive_int, default=4,
+            help="Maximum graph traversal depth (default: 4)",
+        )
+        command.add_argument(
+            "--max-consumers", type=_positive_int, default=10,
+            help="Maximum direct and indirect consumers per journey",
+        )
+        command.add_argument(
+            "--max-tests", type=_positive_int, default=20,
+            help="Maximum test entries per journey",
+        )
+        command.add_argument(
             "--details", action="store_true",
             help="Show complete consumer and repository implementation paths",
         )
@@ -1253,11 +1276,29 @@ def main() -> None:
         "journeys", help="List backend use cases and their full-stack consumers",
     )
     add_journey_options(journeys_cmd)
+    journey_source = journeys_cmd.add_mutually_exclusive_group()
+    journey_source.add_argument(
+        "--from-file", help="Keep journeys related to this repository file",
+    )
+    journey_source.add_argument(
+        "--from-component", help="Keep journeys related to this symbol or component",
+    )
+    journey_source.add_argument(
+        "--from-route", help="Keep journeys whose frontend or backend route matches",
+    )
     journey_cmd = sub.add_parser(
         "journey", help="Show one backend use-case journey",
     )
     journey_cmd.add_argument("use_case", help="Use-case name or qualified name")
     add_journey_options(journey_cmd)
+    affected_cmd = sub.add_parser(
+        "journeys-affected",
+        help="List journeys related to files changed in a Git diff",
+    )
+    affected_cmd.add_argument(
+        "--base", default="HEAD~1", help="Git diff base (default: HEAD~1)",
+    )
+    add_journey_options(affected_cmd)
 
     communities_cmd = sub.add_parser("communities", help="List graph communities")
     communities_cmd.add_argument(

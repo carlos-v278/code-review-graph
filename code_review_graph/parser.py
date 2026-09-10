@@ -9442,6 +9442,10 @@ class CodeParser:
         string_constants: Optional[dict[str, str]] = None,
     ) -> tuple[str, bool]:
         text = node.text.decode("utf-8", errors="replace")
+        constants = string_constants or {}
+        if node.type in ("identifier", "member_expression"):
+            value = constants.get(f"{_TS_STRING_CONSTANT_PREFIX_KEY}{text}")
+            return (value, False) if value is not None else (text, True)
         if node.type == "string" and len(text) >= 2:
             return text[1:-1], False
         if node.type == "template_string" and len(text) >= 2:
@@ -9453,7 +9457,7 @@ class CodeParser:
                 expression = substitution.text[2:-1].decode(
                     "utf-8", errors="replace",
                 ).strip()
-                constant = (string_constants or {}).get(
+                constant = constants.get(
                     f"{_TS_STRING_CONSTANT_PREFIX_KEY}{expression}",
                 )
                 if constant is not None:
@@ -9464,8 +9468,80 @@ class CodeParser:
                     value = value.replace(substitution.text.decode(), ":param")
                 else:
                     dynamic = True
-            return value, dynamic
+            route_path = value.split("?", 1)[0].split("#", 1)[0]
+            return value, dynamic and "${" in route_path
         return text, True
+
+    @classmethod
+    def _typescript_request_constants(
+        cls, call_node, import_map: dict[str, str],
+    ) -> dict[str, str]:
+        """Resolve nearby URL aliases and static class fields for HTTP calls."""
+        root = call_node
+        while root.parent is not None:
+            root = root.parent
+        declarations = []
+        scope_types = {
+            "arrow_function", "function_declaration", "function_expression",
+            "generator_function_declaration", "method_definition",
+        }
+
+        def scope(node):
+            current = node.parent
+            while current is not None:
+                if current.type in scope_types:
+                    return current.type, current.start_byte, current.end_byte
+                current = current.parent
+            return None
+
+        call_scope = scope(call_node)
+        stack = [root]
+        while stack:
+            current = stack.pop()
+            if current.type in ("variable_declarator", "public_field_definition"):
+                declarations.append(current)
+            stack.extend(reversed(current.named_children))
+
+        constants = dict(import_map)
+        for _ in range(3):
+            changed = False
+            for declaration in declarations:
+                if (
+                    declaration.type == "variable_declarator"
+                    and (
+                        scope(declaration) != call_scope
+                        or declaration.start_byte > call_node.start_byte
+                    )
+                ):
+                    continue
+                name = declaration.child_by_field_name("name")
+                value = declaration.child_by_field_name("value")
+                if name is None or value is None:
+                    continue
+                key = name.text.decode("utf-8", errors="replace")
+                resolved, dynamic = cls._typescript_static_string(value, constants)
+                if dynamic:
+                    continue
+                candidates = (
+                    {key} if declaration.type == "variable_declarator" else set()
+                )
+                parent = declaration.parent
+                while parent is not None:
+                    class_name = parent.child_by_field_name("name")
+                    if parent.type in ("class_declaration", "class") and class_name:
+                        candidates.add(
+                            class_name.text.decode("utf-8", errors="replace") + "." + key,
+                        )
+                        break
+                    parent = parent.parent
+                for candidate in candidates:
+                    constant_key = f"{_TS_STRING_CONSTANT_PREFIX_KEY}{candidate}"
+                    if constants.get(constant_key) != resolved:
+                        constants[constant_key] = resolved
+                        changed = True
+            if not changed:
+                break
+        return constants
 
     def _emit_nestjs_endpoint_nodes(
         self, method_node, method_name: str, class_name: Optional[str],
@@ -9597,8 +9673,11 @@ class CodeParser:
         if http_method not in _HTTP_REQUEST_METHODS:
             return False
         if route_node is not None:
+            string_constants = self._typescript_request_constants(
+                call_node, import_map,
+            )
             route_text, dynamic = self._typescript_static_string(
-                route_node, import_map,
+                route_node, string_constants,
             )
         else:
             dynamic = False
