@@ -25,6 +25,7 @@ from code_review_graph.incremental import (
     _commit_object_exists,
     collect_all_files,
     full_build,
+    get_all_changed_files,
     get_all_tracked_files,
     get_changed_files,
     get_staged_and_unstaged,
@@ -95,6 +96,15 @@ def test_get_changed_files_real_git(git_repo: Path) -> None:
     """get_changed_files should list hello.py as changed between HEAD~1..HEAD."""
     changed = get_changed_files(git_repo, base="HEAD~1")
     assert "hello.py" in changed
+
+
+def test_all_changed_files_keeps_diff_and_untracked(git_repo: Path) -> None:
+    (git_repo / "untracked.py").write_text("value = 1\n", encoding="utf-8")
+
+    assert get_all_changed_files(git_repo, base="HEAD~1") == [
+        "hello.py",
+        "untracked.py",
+    ]
 
 
 @pytest.fixture()

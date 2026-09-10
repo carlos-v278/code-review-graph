@@ -447,6 +447,15 @@ def analyze_changes(
     # Map changes to nodes.
     if changed_ranges:
         changed_nodes = map_changes_to_nodes(store, changed_ranges)
+        ranged_files = set(changed_ranges)
+        seen_nodes = {node.qualified_name for node in changed_nodes}
+        for file_path in changed_files:
+            if file_path in ranged_files:
+                continue
+            for node in store.get_nodes_by_file(file_path):
+                if node.qualified_name not in seen_nodes:
+                    seen_nodes.add(node.qualified_name)
+                    changed_nodes.append(node)
     else:
         # Fallback: all nodes in changed files.
         changed_nodes = []
@@ -490,25 +499,31 @@ def analyze_changes(
     # Affected flows.
     affected = get_affected_flows(store, changed_files)
 
-    # Detect test gaps: changed functions without TESTED_BY edges.
+    # Classify direct, indirect-only, and absent test coverage.
     test_gaps: list[dict[str, Any]] = []
+    test_coverage: list[dict[str, Any]] = []
     for node in changed_funcs:
         if node.is_test:
             continue
         if node.name in _TEST_GAP_EXEMPT_NAMES:
             continue
-        # TESTED_BY edges are stored as source=production, target=test by the
-        # parser, so a changed production function finds its tests by source.
-        # See: #515
-        tested = store.get_edges_by_source(node.qualified_name)
-        if not any(e.kind == "TESTED_BY" for e in tested):
-            test_gaps.append({
-                "name": _sanitize_name(node.name),
-                "qualified_name": _sanitize_name(node.qualified_name),
-                "file": node.file_path,
-                "line_start": node.line_start,
-                "line_end": node.line_end,
-            })
+        tests = store.get_transitive_tests(node.qualified_name)
+        direct_count = sum(not test.get("indirect", False) for test in tests)
+        classification = (
+            "direct" if direct_count else "indirect_only" if tests else "none"
+        )
+        coverage = {
+            "name": _sanitize_name(node.name),
+            "qualified_name": _sanitize_name(node.qualified_name),
+            "file": node.file_path,
+            "line_start": node.line_start,
+            "line_end": node.line_end,
+            "classification": classification,
+            "test_count": direct_count if direct_count else len(tests),
+        }
+        test_coverage.append(coverage)
+        if classification != "direct":
+            test_gaps.append(coverage)
 
     # Review priorities: top 10 by risk score.
     review_priorities = sorted(node_risks, key=lambda x: x["risk_score"], reverse=True)[:10]
@@ -518,10 +533,24 @@ def analyze_changes(
         f"Analyzed {len(changed_files)} changed file(s):",
         f"  - {len(changed_funcs)} changed function(s)/class(es)",
         f"  - {affected['total']} affected flow(s)",
+        f"  - {sum(c['classification'] == 'direct' for c in test_coverage)} "
+        "directly tested function(s)/class(es)",
+        f"  - {sum(c['classification'] == 'indirect_only' for c in test_coverage)} "
+        "indirect-only test coverage",
+        f"  - {sum(c['classification'] == 'none' for c in test_coverage)} untested",
         f"  - {len(test_gaps)} test gap(s)",
         f"  - Overall risk score: {overall_risk:.2f}",
     ]
-    if test_gaps:
+    indirect_gaps = [
+        gap for gap in test_gaps if gap["classification"] == "indirect_only"
+    ]
+    untested_gaps = [gap for gap in test_gaps if gap["classification"] == "none"]
+    if indirect_gaps:
+        summary_parts.append(
+            "  - Indirect-only tests: "
+            + ", ".join(dict.fromkeys(gap["name"] for gap in indirect_gaps[:5]))
+        )
+    if untested_gaps:
         # Dedup by bare name in the human summary. The underlying test_gaps
         # list keeps every entry (a downstream consumer needs precision via
         # qualified_name), but a graph that ended up with the same function
@@ -531,7 +560,7 @@ def analyze_changes(
         # this is the defensive last line.
         seen_names: set[str] = set()
         gap_names: list[str] = []
-        for g in test_gaps:
+        for g in untested_gaps:
             n = g["name"]
             if n in seen_names:
                 continue
@@ -552,6 +581,7 @@ def analyze_changes(
         "changed_functions": node_risks,
         "affected_flows": affected["affected_flows"],
         "test_gaps": test_gaps,
+        "test_coverage": test_coverage,
         "review_priorities": review_priorities,
         "functions_truncated": funcs_truncated,
     }

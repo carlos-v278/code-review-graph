@@ -1147,6 +1147,15 @@ class TestFlowTools:
         assert "flows" in result
         assert len(result["flows"]) >= 1
 
+    def test_list_flows_reports_not_computed(self):
+        self.store.set_metadata("flows_status", "not_computed")
+
+        result = list_flows(repo_root=str(self.root))
+
+        assert result["status"] == "not_computed"
+        assert result["total"] is None
+        assert "postprocess" in result["summary"]
+
     def test_list_flows_summary(self):
         result = list_flows(repo_root=str(self.root))
         assert "Found" in result["summary"]
@@ -1422,6 +1431,17 @@ class TestCommunityTools:
         assert "communities" in result
         assert len(result["communities"]) >= 1
 
+    def test_community_views_report_not_computed(self):
+        self.store.set_metadata("communities_status", "not_computed")
+
+        listed = list_communities_func(repo_root=str(self.root))
+        overview = get_architecture_overview_func(repo_root=str(self.root))
+
+        assert listed["status"] == "not_computed"
+        assert listed["total"] is None
+        assert overview["status"] == "not_computed"
+        assert overview["cross_community_edges_total"] is None
+
     def test_list_communities_summary(self):
         result = list_communities_func(repo_root=str(self.root))
         assert "Found" in result["summary"]
@@ -1592,6 +1612,9 @@ class TestBuildPostprocess:
         assert result["status"] == "ok"
         assert result["total_nodes"] > 0
         assert result.get("postprocess_level") == "none"
+        with GraphStore(self.root / ".code-review-graph" / "graph.db") as store:
+            assert store.get_metadata("flows_status") == "not_computed"
+            assert store.get_metadata("communities_status") == "not_computed"
         assert "flows_detected" not in result
         assert "communities_detected" not in result
         assert "fts_indexed" not in result
@@ -1611,6 +1634,9 @@ class TestBuildPostprocess:
             )
         assert result["status"] == "ok"
         assert result.get("postprocess_level") == "minimal"
+        with GraphStore(self.root / ".code-review-graph" / "graph.db") as store:
+            assert store.get_metadata("flows_status") == "not_computed"
+            assert store.get_metadata("communities_status") == "not_computed"
         assert result.get("signatures_updated") is True
         assert "flows_detected" not in result
         assert "communities_detected" not in result
@@ -1637,6 +1663,9 @@ class TestBuildPostprocess:
             )
         assert result["status"] == "ok"
         assert result.get("postprocess_level") == "full"
+        with GraphStore(self.root / ".code-review-graph" / "graph.db") as store:
+            assert store.get_metadata("flows_status") == "computed"
+            assert store.get_metadata("communities_status") == "computed"
         # Full postprocess should have flows and communities
         assert "flows_detected" in result
         assert "communities_detected" in result

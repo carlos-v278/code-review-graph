@@ -430,11 +430,12 @@ def test_filters_journeys_from_component_file_and_route(tmp_path: Path) -> None:
             store, root, api_prefixes=["/api"], source_file=component,
         )
         by_diff = build_journeys(
-            store, root, api_prefixes=["/api"], changed_files=[component],
+            store, root, api_prefixes=["/api"],
+            changed_files=[component, "backend/src/unrelated.ts"],
         )
         by_route = build_journeys(
             store, root, api_prefixes=["/api"],
-            source_route="/support/accounts",
+            source_route="/support/accounts/123",
         )
     finally:
         store.close()
@@ -442,6 +443,13 @@ def test_filters_journeys_from_component_file_and_route(tmp_path: Path) -> None:
         "GetAccountUseCase",
     ]
     assert by_file["total"] == by_diff["total"] == by_route["total"] == 1
+    assert by_diff["changed_file_coverage"] == {
+        "total": 2,
+        "matched": 1,
+        "unmatched": 1,
+        "unmatched_files": ["backend/src/unrelated.ts"],
+        "unmatched_files_hidden": 0,
+    }
     assert by_diff["journeys"][0]["selection"][0]["reason"] in {
         "upstream graph dependency", "frontend route path",
     }
@@ -467,6 +475,12 @@ def test_qualified_route_requires_exact_method_and_path() -> None:
     )
     assert route_selection_matches(
         [post_consumer], "/admin/organizations", ["/api"],
+    )
+    child_consumer = {
+        "method": "GET", "route": "/api/admin/organizations/:id/members",
+    }
+    assert not route_selection_matches(
+        [child_consumer], "/admin/organizations", ["/api"],
     )
 
 

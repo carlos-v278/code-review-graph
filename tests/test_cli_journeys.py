@@ -52,7 +52,7 @@ def test_journeys_affected_forwards_git_diff(tmp_path, monkeypatch, capsys):
     ]
     with patch.object(sys, "argv", argv):
         with patch(
-            "code_review_graph.incremental.get_changed_files",
+            "code_review_graph.incremental.get_all_changed_files",
             return_value=["frontend/src/OrganizationsPage.vue"],
         ) as changed:
             with patch(
@@ -80,6 +80,41 @@ def test_journeys_forwards_component_search(tmp_path, monkeypatch, capsys):
             cli.main()
     assert json.loads(capsys.readouterr().out) == result
     assert build.call_args.kwargs["source_component"] == "OrganizationsPage"
+
+
+@pytest.mark.parametrize(
+    "selector_args",
+    [
+        ["--from-component", "LinkedInAccountPage"],
+        [
+            "--from-file",
+            "frontend/src/views/admin/LinkedInAccountPage.vue",
+        ],
+    ],
+)
+def test_journeys_text_accepts_incomplete_path_without_symbol(
+    tmp_path, monkeypatch, capsys, selector_args,
+):
+    repo = _repo(tmp_path, monkeypatch)
+    result = {
+        "status": "ok", "total": 1, "shown": 1, "truncated": False,
+        "provenance": {"freshness": "current"}, "query": {},
+        "journeys": [{
+            "name": "SyncAccountUseCase", "domain": "accounts",
+            "consumers": [], "repositories": [], "tests": [],
+            "ambiguities": [],
+            "incomplete_paths": [{
+                "kind": "event_dispatch", "reason": "listener unresolved",
+            }],
+        }],
+    }
+    argv = ["code-review-graph", "journeys", *selector_args, "--repo", str(repo)]
+    with patch.object(sys, "argv", argv):
+        with patch(
+            "code_review_graph.journeys.build_journeys", return_value=result,
+        ):
+            cli.main()
+    assert "incomplete: event_dispatch — listener unresolved" in capsys.readouterr().out
 
 
 def test_journey_outputs_text(tmp_path, monkeypatch, capsys):

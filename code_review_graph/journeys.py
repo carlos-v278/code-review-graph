@@ -190,6 +190,7 @@ def build_journeys(
         if details else {}
     )
     journeys: list[dict[str, Any]] = []
+    matched_changed_files: set[str] = set()
     for use_case in use_cases:
         roots = {use_case.qualified_name} | {
             node.qualified_name for node in nodes
@@ -529,6 +530,17 @@ def build_journeys(
         ))
         if selection_requested and not selection:
             continue
+        for match in selection:
+            match_file = str(match.get("file") or match.get("value") or "")
+            normalized_match = Path(match_file).as_posix().removeprefix("./")
+            for changed_file in changed_files:
+                normalized_changed = Path(changed_file).as_posix().removeprefix("./")
+                if (
+                    normalized_match == normalized_changed
+                    or normalized_match.endswith("/" + normalized_changed)
+                    or normalized_changed.endswith("/" + normalized_match)
+                ):
+                    matched_changed_files.add(changed_file)
         journey = {
             "id": use_case.qualified_name, "name": use_case.name,
             "domain": _domain(use_case, root),
@@ -559,6 +571,10 @@ def build_journeys(
     incomplete = any(
         journey["analysis_status"] == "incomplete" for journey in journeys
     )
+    unmatched_changed_files = [
+        file_path for file_path in changed_files
+        if file_path not in matched_changed_files
+    ]
     return {
         "status": "ok", "schema_version": 1, "provenance": provenance,
         "query": {
@@ -573,6 +589,13 @@ def build_journeys(
             "max_consumers": max_consumers,
             "max_tests": max_tests,
             "details": details,
+        },
+        "changed_file_coverage": {
+            "total": len(changed_files),
+            "matched": len(matched_changed_files),
+            "unmatched": len(unmatched_changed_files),
+            "unmatched_files": unmatched_changed_files[:limit],
+            "unmatched_files_hidden": max(0, len(unmatched_changed_files) - limit),
         },
         "coverage": {
             "complete": not stale and not incomplete,

@@ -54,6 +54,17 @@ def list_flows(
 
     store, root = _get_store(repo_root)
     try:
+        if store.get_metadata("flows_status") == "not_computed":
+            return {
+                "status": "not_computed",
+                "summary": (
+                    "Execution flows were not computed. Run "
+                    "`code-review-graph postprocess --repo .`."
+                ),
+                "flows": [],
+                "total": None,
+                "truncated": False,
+            }
         # Count every matching flow, then keep the bounded prefix — the same
         # "count all, return a prefix" contract query.py uses for max_results.
         # The flows table has one row per entry point, so a full read is cheap

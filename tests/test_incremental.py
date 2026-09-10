@@ -23,6 +23,7 @@ from code_review_graph.incremental import (
     find_project_root,
     find_repo_root,
     full_build,
+    get_all_changed_files,
     get_all_tracked_files,
     get_changed_files,
     get_db_path,
@@ -632,6 +633,18 @@ class TestGitOperations:
         )
 
         assert get_staged_and_unstaged(tmp_path) == []
+
+    @patch("code_review_graph.incremental.get_staged_and_unstaged")
+    @patch("code_review_graph.incremental.get_changed_files")
+    def test_get_all_changed_files_unions_diff_and_worktree(
+        self, diff, working_tree, tmp_path,
+    ):
+        diff.return_value = ["tracked.py", "shared.py"]
+        working_tree.return_value = ["shared.py", "untracked.py"]
+
+        assert get_all_changed_files(tmp_path, "origin/main") == [
+            "tracked.py", "shared.py", "untracked.py",
+        ]
 
     @patch("code_review_graph.incremental.subprocess.run")
     def test_get_all_tracked_files(self, mock_run, tmp_path):

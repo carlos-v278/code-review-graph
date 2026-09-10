@@ -644,7 +644,7 @@ def _run_graph_tool_command(args, repo_root: Path) -> None:
         )
     elif args.command in ("journeys", "journey", "journeys-affected"):
         from .graph import GraphStore
-        from .incremental import get_changed_files, get_db_path
+        from .incremental import get_all_changed_files, get_db_path
         from .journey_results import infer_journey_selector
         from .journeys import build_journeys, format_journeys_text
 
@@ -671,7 +671,7 @@ def _run_graph_tool_command(args, repo_root: Path) -> None:
                     source_component=getattr(args, "from_component", None),
                     source_route=getattr(args, "from_route", None),
                     changed_files=(
-                        get_changed_files(repo_root, args.base)
+                        get_all_changed_files(repo_root, args.base)
                         if args.command == "journeys-affected" else None
                     ),
                 )
@@ -1992,17 +1992,12 @@ def main() -> None:
                     estimate_file_tokens,
                     format_context_savings_panel,
                 )
-                from .incremental import (
-                    get_changed_files,
-                    get_staged_and_unstaged,
-                )
+                from .incremental import get_all_changed_files
 
                 # Reuse the base the update actually resolved to (args.base is
-                # None by default now, which get_changed_files cannot accept).
+                # None by default now, which change discovery cannot accept).
                 brief_base = result.get("base_resolved") or "HEAD~1"
-                changed = get_changed_files(repo_root, brief_base)
-                if not changed:
-                    changed = get_staged_and_unstaged(repo_root)
+                changed = get_all_changed_files(repo_root, brief_base)
                 if changed:
                     impact = analyze_changes(
                         store,
@@ -2246,12 +2241,10 @@ def main() -> None:
                 attach_context_savings,
                 estimate_file_tokens,
             )
-            from .incremental import get_changed_files, get_staged_and_unstaged
+            from .incremental import get_all_changed_files
 
             base = args.base
-            changed = get_changed_files(repo_root, base)
-            if not changed:
-                changed = get_staged_and_unstaged(repo_root)
+            changed = get_all_changed_files(repo_root, base)
 
             if not changed:
                 print("No changes detected.")
