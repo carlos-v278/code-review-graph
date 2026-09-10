@@ -5,21 +5,32 @@
 ```bash
 code-review-graph journeys [--format text|json] [--consumer-type TYPE] \
   [--confidence LEVEL] [--api-prefix PATH] [--consumer-manifest FILE] \
-  [--details] [--limit N] [--repo PATH]
-code-review-graph journey <use-case> [same options]
+  [--from-file FILE | --from-component NAME | --from-route ROUTE] \
+  [--details] [--depth N] [--max-consumers N] [--max-tests N] \
+  [--limit N] [--repo PATH]
+code-review-graph journey <use-case|component|route|file> [same options]
+code-review-graph journeys-affected [--base REF] [same output options]
 ```
 
 `journeys` inventories classes ending in `UseCase` and reports evidence-backed
 HTTP/frontend, cron, queue, event, and webhook entry points, downstream
-repositories, and direct or indirect tests. `journey` selects one exact or
-unambiguous partial name. Multiple matches are reported as ambiguous; the CLI
-never chooses one silently.
+repositories, and direct or indirect tests. `journey` accepts an exact or
+unambiguous use-case name, a Vue component, an HTTP route, or a repository file.
+Multiple same-name use cases are reported as ambiguous with qualified commands
+ready to copy and paste; the CLI never chooses one silently.
 
-`--details` expands every consumer and repository path with its intermediate
+The default output keeps directly linked consumers, repositories, and tests
+compact. Full `--details` are reserved for `journey <selector>` and expand
+bounded indirect dependencies with their depth
+and relationship reason, plus every retained consumer and repository path with its intermediate
 symbols, relations, files, and lines. Repository ports are connected to their
 implementing classes and reachable mapper functions when the graph contains
 that static evidence. Vue callers are traced before the service request.
 Repositories are counted once, with called methods nested below them.
+Use `--depth`, `--max-consumers`, and `--max-tests` to tune the bounds; every
+omitted category reports how many items were hidden.
+Batch commands accept `--details` for compatibility but keep their output
+summarized and report how to request one complete journey.
 
 For TypeORM repositories, detailed output also reports statically identified
 entity/table access as `READS_FROM`, `WRITES_TO`, or `READS_WRITES`. Missing
@@ -29,9 +40,13 @@ paths separately from ambiguous HTTP route matches. Getter aliases such as
 entity association.
 
 Domain-event construction is connected to matching `@OnEvent` handlers as a
-probable downstream effect. The detailed path shows the publishing method,
+conditional, probable downstream effect. The detailed path shows the publishing method,
 event class, and handler. Since static analysis cannot evaluate handler guards,
 these paths remain explicitly incomplete.
+
+Tests are grouped by file and classified as direct, indirect, or candidate.
+A candidate is only a source mention. These relationships help choose tests;
+they do not claim that the behavior is covered.
 
 NestJS routes are matched to `fetch` and Axios-style requests by HTTP method
 and normalized path. `--api-prefix /api` removes a deployment prefix during
@@ -51,7 +66,7 @@ consumers:
 A declaration may instead use `method` plus `route`. Supported types are
 `bot`, `cron`, `event`, `frontend`, `http`, `queue`, and `webhook`. The output
 always includes graph commit/branch/freshness, recognized syntax, limitations,
-ambiguities, and truncation state. A stale or unverifiable graph is never
+ambiguities with route-candidate evidence, and truncation state. A stale or unverifiable graph is never
 labelled complete.
 
 ## Skills and Slash Commands

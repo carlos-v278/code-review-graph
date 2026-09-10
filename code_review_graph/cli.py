@@ -535,6 +535,7 @@ _GRAPH_TOOL_COMMANDS = {
     "flow",
     "journeys",
     "journey",
+    "journeys-affected",
     "communities",
     "community",
     "architecture",
@@ -641,21 +642,63 @@ def _run_graph_tool_command(args, repo_root: Path) -> None:
             include_source=args.source,
             repo_root=root,
         )
-    elif args.command in ("journeys", "journey"):
+    elif args.command in ("journeys", "journey", "journeys-affected"):
         from .graph import GraphStore
-        from .incremental import get_db_path
+        from .incremental import get_changed_files, get_db_path
+        from .journey_results import infer_journey_selector
         from .journeys import build_journeys, format_journeys_text
 
         try:
             with GraphStore(get_db_path(repo_root)) as store:
-                result = build_journeys(
-                    store, repo_root, api_prefixes=args.api_prefix,
+                full_details = args.details and args.command == "journey"
+                lookup_selector = None
+                lookup_value = str(getattr(args, "use_case", "") or "")
+                if args.command == "journey":
+                    lookup_selector = infer_journey_selector(
+                        lookup_value, repo_root,
+                    )
+                kwargs = dict(
+                    api_prefixes=args.api_prefix,
                     consumer_manifest=args.consumer_manifest,
                     consumer_types=args.consumer_type,
                     confidences=args.confidence, limit=args.limit,
                     target=getattr(args, "use_case", None),
-                    details=args.details,
+                    details=full_details,
+                    max_depth=args.depth,
+                    max_consumers=args.max_consumers,
+                    max_tests=args.max_tests,
+                    source_file=getattr(args, "from_file", None),
+                    source_component=getattr(args, "from_component", None),
+                    source_route=getattr(args, "from_route", None),
+                    changed_files=(
+                        get_changed_files(repo_root, args.base)
+                        if args.command == "journeys-affected" else None
+                    ),
                 )
+                if lookup_selector:
+                    kwargs.update(target=None, **lookup_selector)
+                result = build_journeys(store, repo_root, **kwargs)
+                if args.command == "journey" and result.get("status") == "not_found":
+                    lookup_selector = {"source_component": lookup_value}
+                    kwargs.update(target=None, **lookup_selector)
+                    result = build_journeys(store, repo_root, **kwargs)
+                if lookup_selector and result.get("status") == "ok":
+                    if result.get("total") == 0:
+                        result = {
+                            "status": "not_found", "target": lookup_value,
+                            "candidates": [],
+                        }
+                    else:
+                        result.setdefault("query", {})["lookup"] = {
+                            "value": lookup_value,
+                            "kind": next(iter(lookup_selector)).removeprefix("source_"),
+                        }
+                if args.details and not full_details:
+                    result.setdefault("query", {})["details_notice"] = (
+                        "batch output stays summarized; use "
+                        "`code-review-graph journey <selector> --details` "
+                        "for complete paths"
+                    )
         except ValueError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             raise SystemExit(2) from exc
@@ -1216,7 +1259,7 @@ def main() -> None:
     flow_cmd.add_argument("--source", action="store_true", help="Include source snippets")
     flow_cmd.add_argument("--repo", default=None, help="Repository root (auto-detected)")
 
-    def add_journey_options(command) -> None:
+    def add_journey_options(command, *, full_details: bool = False) -> None:
         command.add_argument(
             "--format", choices=["text", "json"], default="text",
             help="Output format (default: text)",
@@ -1244,8 +1287,24 @@ def main() -> None:
         )
         command.add_argument("--limit", type=_positive_int, default=50)
         command.add_argument(
+            "--depth", type=_positive_int, default=4,
+            help="Maximum graph traversal depth (default: 4)",
+        )
+        command.add_argument(
+            "--max-consumers", type=_positive_int, default=10,
+            help="Maximum direct and indirect consumers per journey",
+        )
+        command.add_argument(
+            "--max-tests", type=_positive_int, default=20,
+            help="Maximum test entries per journey",
+        )
+        command.add_argument(
             "--details", action="store_true",
-            help="Show complete consumer and repository implementation paths",
+            help=(
+                "Show complete consumer and repository implementation paths"
+                if full_details else
+                "Accepted for compatibility; batch output remains summarized"
+            ),
         )
         command.add_argument("--repo", default=None, help="Repository root (auto-detected)")
 
@@ -1253,11 +1312,29 @@ def main() -> None:
         "journeys", help="List backend use cases and their full-stack consumers",
     )
     add_journey_options(journeys_cmd)
+    journey_source = journeys_cmd.add_mutually_exclusive_group()
+    journey_source.add_argument(
+        "--from-file", help="Keep journeys related to this repository file",
+    )
+    journey_source.add_argument(
+        "--from-component", help="Keep journeys related to this symbol or component",
+    )
+    journey_source.add_argument(
+        "--from-route", help="Keep journeys whose frontend or backend route matches",
+    )
     journey_cmd = sub.add_parser(
         "journey", help="Show one backend use-case journey",
     )
     journey_cmd.add_argument("use_case", help="Use-case name or qualified name")
-    add_journey_options(journey_cmd)
+    add_journey_options(journey_cmd, full_details=True)
+    affected_cmd = sub.add_parser(
+        "journeys-affected",
+        help="List journeys related to files changed in a Git diff",
+    )
+    affected_cmd.add_argument(
+        "--base", default="HEAD~1", help="Git diff base (default: HEAD~1)",
+    )
+    add_journey_options(affected_cmd)
 
     communities_cmd = sub.add_parser("communities", help="List graph communities")
     communities_cmd.add_argument(

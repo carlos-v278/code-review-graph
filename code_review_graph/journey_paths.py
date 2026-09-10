@@ -10,6 +10,8 @@ from .graph import GraphEdge, GraphNode
 from .journey_consumers import is_frontend_request
 from .journey_source import relative_path
 
+_CONDITIONAL_EDGES = frozenset({"PUBLISHES", "HANDLED_BY"})
+
 
 def walk(
     starts: set[str], adjacency: dict[str, list[tuple[str, GraphEdge]]],
@@ -31,6 +33,44 @@ def walk(
     return distances, evidence
 
 
+def link_metadata(
+    target: str, roots: set[str], evidence: dict[str, GraphEdge], *,
+    direction: str, distance: int,
+) -> dict[str, Any]:
+    """Describe why a reachable node belongs to a journey."""
+    current = target
+    edge_kinds: list[str] = []
+    conditional = False
+    while current not in roots:
+        edge = evidence.get(current)
+        if edge is None:
+            break
+        edge_kinds.append(edge.kind)
+        conditional = conditional or edge.kind in _CONDITIONAL_EDGES
+        current = (
+            edge.target_qualified if direction == "upstream"
+            else edge.source_qualified
+        )
+    scope = "direct" if distance <= 1 and not conditional else "indirect"
+    relation_names = " → ".join(kind.casefold() for kind in edge_kinds)
+    return {
+        "scope": scope,
+        "depth": distance,
+        "conditional": conditional,
+        "reason": relation_names or "same symbol",
+        "edge_kinds": edge_kinds,
+    }
+
+
+def hidden_beyond_depth(
+    starts: set[str], adjacency: dict[str, list[tuple[str, GraphEdge]]],
+    max_depth: int,
+) -> int:
+    visible, _ = walk(starts, adjacency, max_depth=max_depth)
+    extended, _ = walk(starts, adjacency, max_depth=max_depth + 1)
+    return sum(distance > max_depth for distance in extended.values())
+
+
 def relation(
     edge: GraphEdge | None, *, root: Path, name: str | None = None,
     reason: str | None = None,
@@ -43,6 +83,8 @@ def relation(
             "file": relative_path(edge.file_path, root),
             "line": edge.line,
         })
+        if edge.kind in _CONDITIONAL_EDGES:
+            result["conditional"] = True
     if reason:
         result["reason"] = reason
     return result
@@ -114,9 +156,9 @@ def downstream_path(
 
 def frontend_prefixes(
     target: str, incoming: dict[str, list[tuple[str, GraphEdge]]], *,
-    nodes_by_qn: dict[str, GraphNode], root: Path,
+    nodes_by_qn: dict[str, GraphNode], root: Path, max_depth: int,
 ) -> list[list[dict[str, Any]]]:
-    reachable, evidence = walk({target}, incoming)
+    reachable, evidence = walk({target}, incoming, max_depth=max_depth)
     candidates = {
         qn for qn, distance in reachable.items()
         if distance > 0 and qn in nodes_by_qn

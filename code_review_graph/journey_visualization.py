@@ -171,6 +171,7 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   .canvas-viewport svg { display: block; width: 100%; height: 100%; user-select: none; }
   .canvas-stage { fill: #788797; font: 600 13px "Avenir Next", Avenir, "Segoe UI", sans-serif; }
   .canvas-edge { fill: none; stroke: #a8b5c3; stroke-width: 1.6; }
+  .canvas-edge.conditional { stroke-dasharray: 7 5; }
   .canvas-edge-label { fill: #6d7c8c; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; paint-order: stroke; stroke: #fbfcfd; stroke-width: 5px; }
   .canvas-node rect { stroke-width: 1.6; }
   .canvas-node .node-title { fill: #172331; font: 650 13px "Avenir Next", Avenir, "Segoe UI", sans-serif; }
@@ -243,13 +244,15 @@ function el(tag, className, text) {
   if (text !== undefined && text !== null) node.textContent = text;
   return node;
 }
-function allPaths(journey) {
+function allPaths(journey, includeIndirect = false) {
   const result = [];
-  (journey.consumers || []).forEach(consumer => {
+  const consumers = [...(journey.consumers || [])];
+  if (includeIndirect) consumers.push(...(journey.indirect?.consumers || []));
+  consumers.forEach(consumer => {
     (consumer.frontend_requests || []).forEach(request => (request.paths || []).forEach(path => result.push(path)));
     if (consumer.path) result.push(consumer.path);
   });
-  (journey.effects || []).forEach(effect => { if (effect.path) result.push(effect.path); });
+  if (includeIndirect) (journey.effects || []).forEach(effect => { if (effect.path) result.push(effect.path); });
   return result;
 }
 function searchText(journey) {
@@ -384,11 +387,6 @@ function graphForJourney(journey) {
       components.forEach(file => addEdge(addNode({kind: 'Vue component', name: basename(file), symbol: `component:${file}`}), serviceId || routeId || controllerId));
     });
   });
-  (journey.effects || []).forEach(effect => {
-    const eventId = addNode({kind: 'Domain event', name: effect.event, symbol: `event:${effect.event}`});
-    const handlerId = addNode({kind: 'Event handler', name: effect.name, symbol: `handler:${effect.event}:${effect.name}`});
-    addEdge(useCaseId, eventId, 'publishes'); addEdge(eventId, handlerId, 'handled_by');
-  });
   (journey.repositories || []).forEach(repository => (repository.methods || []).forEach(method => {
     const repositoryNode = {kind: 'Repository', name: `${repository.name}.${method.name}`, symbol: `repository:${repository.id}:${method.name}`};
     const repositoryId = addNode(repositoryNode); addEdge(useCaseId, repositoryId);
@@ -432,11 +430,12 @@ function fullGraphForJourney(journey) {
   }
   function path(steps) {
     let previous = null;
-    (steps || []).forEach(step => { const current = add(step); if (previous && previous !== current) edges.set(`${previous}\u0000${current}`, {source: previous, target: current}); previous = current; });
+    (steps || []).forEach(step => { const current = add(step); if (previous && previous !== current) edges.set(`${previous}\u0000${current}`, {source: previous, target: current, relation: step.via?.relation}); previous = current; });
   }
   const useCaseId = add({kind: 'UseCase', name: journey.name, symbol: journey.id});
-  allPaths(journey).forEach(path);
-  (journey.repositories || []).forEach(repository => (repository.methods || []).forEach(method => {
+  allPaths(journey, true).forEach(path);
+  const repositories = [...(journey.repositories || []), ...(journey.indirect?.repositories || [])];
+  repositories.forEach(repository => (repository.methods || []).forEach(method => {
     (method.implementation_paths || (method.path ? [method.path] : [])).forEach(path);
     const repositoryId = add({kind: 'Repository', name: `${repository.name}.${method.name}`, symbol: `repository:${repository.id}:${method.name}`});
     edges.set(`${useCaseId}\u0000${repositoryId}`, {source: useCaseId, target: repositoryId});
@@ -496,7 +495,8 @@ function renderCanvas(journey, detailed = false) {
   graph.edges.forEach(edge => {
     const a = positions.get(edge.source), b = positions.get(edge.target); if (!a || !b) return;
     const x1 = a.x + nodeW, y1 = a.y + nodeH / 2, x2 = b.x, y2 = b.y + nodeH / 2, bend = Math.max(34, (x2 - x1) / 2);
-    world.append(svgEl('path', {d: `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`, class: 'canvas-edge', 'marker-end': 'url(#arrow)'}));
+    const conditional = ['publishes', 'handled_by'].includes(String(edge.relation || '').toLowerCase());
+    world.append(svgEl('path', {d: `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`, class: `canvas-edge${conditional ? ' conditional' : ''}`, 'marker-end': 'url(#arrow)'}));
   });
   const defs = svgEl('defs'); const marker = svgEl('marker', {id: 'arrow', viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 6, markerHeight: 6, orient: 'auto-start-reverse'});
   marker.append(svgEl('path', {d: 'M 0 0 L 10 5 L 0 10 z', fill: '#8fa0b1'})); defs.append(marker); svg.prepend(defs);
@@ -550,6 +550,8 @@ function renderDetail(journey) {
   summary.append(el('span', '', `${(journey.effects || []).length} effets`));
   summary.append(el('span', '', `${journey.repositories.length} repositories`));
   summary.append(el('span', '', `${journey.tests.length} tests`)); detail.append(summary);
+  const hidden = Object.values(journey.hidden || {}).reduce((sum, value) => sum + Number(value || 0), 0);
+  if (hidden) summary.append(el('span', '', `+${hidden} masqués`));
   detail.append(renderCanvas(journey, viewMode === 'complete'));
   main.append(detail);
 }
