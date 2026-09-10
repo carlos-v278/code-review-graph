@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,20 @@ from .journey_paths import downstream_path, link_metadata, walk
 from .journey_paths import path as build_path
 from .journey_persistence import typeorm_persistence
 from .journey_source import relative_path
+
+_MAPPING_METHOD = re.compile(
+    r"^(?:from|map|to)(?:domain|dto|entity|list|orm|persistence|response)",
+    re.IGNORECASE,
+)
+
+
+def _is_mapping_node(node: GraphNode, root: Path) -> bool:
+    identity = " ".join((node.name, node.parent_name or ""))
+    return (
+        "/mappers/" in relative_path(node.file_path, root).casefold()
+        or "mapper" in identity.casefold()
+        or bool(_MAPPING_METHOD.match(node.name))
+    )
 
 
 def repository_contract(
@@ -78,14 +93,7 @@ def repository_implementation_paths(
                 if distance > 0
                 and qn in nodes_by_qn
                 and nodes_by_qn[qn].kind == "Function"
-                and (
-                    "/mappers/" in relative_path(
-                        nodes_by_qn[qn].file_path, root,
-                    ).casefold()
-                    or "mapper" in " ".join(
-                        (nodes_by_qn[qn].name, nodes_by_qn[qn].parent_name or ""),
-                    ).casefold()
-                )
+                and _is_mapping_node(nodes_by_qn[qn], root)
             ),
             key=lambda item: (reachable[item.qualified_name], item.qualified_name),
         )

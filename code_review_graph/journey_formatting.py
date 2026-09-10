@@ -50,6 +50,8 @@ def _format_consumer(
             )
         for path in request.get("paths", [request.get("path", [])]):
             _format_path(lines, "frontend path", path)
+        if request.get("paths_hidden"):
+            lines.append(f"    +{request['paths_hidden']} frontend paths hidden")
     _format_path(lines, "consumer path", consumer.get("path", []))
 
 
@@ -57,6 +59,13 @@ def format_journeys_text(result: dict[str, Any]) -> str:
     if result.get("status") != "ok":
         candidates = result.get("candidates", [])
         suffix = "\nCandidates:\n  " + "\n  ".join(candidates) if candidates else ""
+        commands = result.get("candidate_commands", [])
+        if commands:
+            suffix += "\nCommands:\n  " + "\n  ".join(
+                item["command"] for item in commands
+            )
+        if result.get("candidates_hidden"):
+            suffix += f"\n  +{result['candidates_hidden']} candidates hidden"
         return f"Journey {result.get('status')}: {result.get('target', '')}{suffix}"
 
     provenance = result.get("provenance", {})
@@ -68,6 +77,8 @@ def format_journeys_text(result: dict[str, Any]) -> str:
     ]
     if result.get("truncated"):
         lines.append("Output truncated; raise --limit to show more.")
+    if result.get("query", {}).get("details_notice"):
+        lines.append(result["query"]["details_notice"])
 
     for journey in result.get("journeys", []):
         lines.append(f"\n{journey['name']} [{journey['domain']}]")

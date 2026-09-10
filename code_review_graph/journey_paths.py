@@ -156,9 +156,9 @@ def downstream_path(
 
 def frontend_prefixes(
     target: str, incoming: dict[str, list[tuple[str, GraphEdge]]], *,
-    nodes_by_qn: dict[str, GraphNode], root: Path,
+    nodes_by_qn: dict[str, GraphNode], root: Path, max_depth: int,
 ) -> list[list[dict[str, Any]]]:
-    reachable, evidence = walk({target}, incoming)
+    reachable, evidence = walk({target}, incoming, max_depth=max_depth)
     candidates = {
         qn for qn, distance in reachable.items()
         if distance > 0 and qn in nodes_by_qn

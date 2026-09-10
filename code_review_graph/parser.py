@@ -9495,6 +9495,17 @@ class CodeParser:
             return None
 
         call_scope = scope(call_node)
+        call_class = None
+        current_parent = call_node.parent
+        while current_parent is not None:
+            if current_parent.type in ("class_declaration", "class"):
+                class_name = current_parent.child_by_field_name("name")
+                if class_name is not None:
+                    call_class = class_name.text.decode(
+                        "utf-8", errors="replace",
+                    )
+                break
+            current_parent = current_parent.parent
         stack = [root]
         while stack:
             current = stack.pop()
@@ -9529,9 +9540,10 @@ class CodeParser:
                 while parent is not None:
                     class_name = parent.child_by_field_name("name")
                     if parent.type in ("class_declaration", "class") and class_name:
-                        candidates.add(
-                            class_name.text.decode("utf-8", errors="replace") + "." + key,
-                        )
+                        owner = class_name.text.decode("utf-8", errors="replace")
+                        candidates.add(owner + "." + key)
+                        if owner == call_class:
+                            candidates.add("this." + key)
                         break
                     parent = parent.parent
                 for candidate in candidates:

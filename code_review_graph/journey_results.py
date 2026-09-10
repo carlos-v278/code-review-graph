@@ -8,7 +8,34 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .graph import GraphNode
+from .journey_consumers import normalize_http_path, paths_match
 from .journey_source import relative_path
+
+_HTTP_METHODS = frozenset({
+    "DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT",
+})
+
+
+def infer_journey_selector(
+    value: str, repo_root: Path,
+) -> dict[str, str] | None:
+    """Interpret an explicit singular lookup without shadowing use-case names."""
+    if "::" in value or value.casefold().endswith("usecase"):
+        return None
+    method_and_route = value.split(maxsplit=1)
+    if len(method_and_route) == 2 and method_and_route[0].upper() in _HTTP_METHODS:
+        return {"source_route": value}
+    if value.startswith("/") and not Path(value).is_file():
+        return {"source_route": value}
+    if (repo_root / value).is_file() or (
+        Path(value).suffix and ("/" in value or "\\" in value)
+    ):
+        return {"source_file": value}
+    if Path(value).suffix or value.casefold().endswith(
+        ("component", "controller", "layout", "page", "service", "view"),
+    ):
+        return {"source_component": value}
+    return None
 
 
 def split_and_limit(
@@ -258,24 +285,50 @@ def graph_selection_matches(
 
 def route_selection_matches(
     consumers: list[dict[str, Any]], source_route: str | None,
+    api_prefixes: Iterable[str] = (),
 ) -> list[dict[str, Any]]:
     if not source_route:
         return []
-    query = source_route.casefold()
+    method_and_route = source_route.split(maxsplit=1)
+    exact_method = (
+        method_and_route[0].upper()
+        if len(method_and_route) == 2
+        and method_and_route[0].upper() in _HTTP_METHODS else None
+    )
+    query_route = method_and_route[1] if exact_method else source_route
+    normalized_query = normalize_http_path(query_route, api_prefixes)
     matches = []
     for consumer in consumers:
-        routes = [str(consumer.get("route", ""))]
+        routes = [(
+            str(consumer.get("method", "")).upper(),
+            str(consumer.get("route", "")),
+        )]
         routes.extend(
-            str(request.get("route", ""))
+            (
+                str(request.get("method", "")).upper(),
+                str(request.get("route", "")),
+            )
             for request in consumer.get("frontend_requests", [])
         )
-        for route in routes:
-            if query in route.casefold():
+        for method, route in routes:
+            normalized_route = normalize_http_path(route, api_prefixes)
+            matches_query = (
+                method == exact_method and paths_match(
+                    normalized_route, normalized_query,
+                )
+                if exact_method else
+                normalized_route.startswith(normalized_query)
+            )
+            if matches_query:
                 matches.append({
                     "kind": "route",
                     "value": source_route,
+                    "method": method,
                     "route": route,
-                    "reason": "route text match",
+                    "reason": (
+                        "exact method and route match" if exact_method
+                        else "route prefix match"
+                    ),
                 })
                 break
     return matches

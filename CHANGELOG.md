@@ -9,6 +9,10 @@
 - Journey output now shows direct consumers, repositories, and tests first.
   `--details` expands bounded indirect dependencies with depth, relationship
   reason, conditional event status, and grouped direct/indirect/candidate tests.
+- `journey` now also accepts a Vue component, repository file, or HTTP route;
+  ambiguous use-case names include qualified copy-paste commands.
+- Batch `--details` stays summarized, and TypeORM chains now recognize multiline
+  repository calls, joined ORM entities, and inline mapping methods.
 
 - Added `journeys` and `journey` commands that trace frontend, HTTP, scheduled,
   event, queue, webhook, and declared external consumers through use cases,
@@ -26,6 +30,7 @@
 - Frontend requests assigned to local variables now resolve static class URL
   constants, restoring paths such as `OrganizationsPage` through
   `AdminOrganizationsService` to `ListOrganizationsUseCase`.
+- Frontend requests using `this.BASE_URL` now resolve the owning class constant.
 - Ambiguous frontend/backend route matches now list bounded candidates with
   file-and-line evidence instead of only reporting an ambiguity count.
 

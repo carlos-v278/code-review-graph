@@ -15,7 +15,9 @@ _INJECTED_REPOSITORY = re.compile(
     r"@InjectRepository\(\s*([A-Za-z_$][\w$]*)\s*\)\s*"
     r"(?:(?:private|protected|public)\s+)?(?:readonly\s+)?([A-Za-z_$][\w$]*)",
 )
-_REPOSITORY_CALL = re.compile(r"this\.([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)")
+_REPOSITORY_CALL = re.compile(
+    r"this\.([A-Za-z_$][\w$]*)\s*\.\s*([A-Za-z_$][\w$]*)",
+)
 _GET_REPOSITORY = re.compile(r"getRepository\(\s*([A-Za-z_$][\w$]*)\s*\)")
 _REPOSITORY_GETTER = re.compile(
     r"\bget\s+([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*(?::[^\{]+)?\{"
@@ -26,6 +28,7 @@ _WRITE_METHODS = frozenset({
     "decrement", "delete", "increment", "insert", "recover", "remove",
     "restore", "save", "softDelete", "softRemove", "update", "upsert",
 })
+_QUERY_BUILDER_WRITE = re.compile(r"\.\s*(?:delete|insert|update)\s*\(")
 
 
 def typeorm_entities(nodes: list[GraphNode]) -> dict[str, tuple[GraphNode, str]]:
@@ -81,12 +84,29 @@ def typeorm_persistence(
                 continue
             accesses[entity_name].add(
                 "write" if operation in _WRITE_METHODS
-                or operation == "query" and _SQL_WRITE.search(source) else "read",
+                or operation == "query" and _SQL_WRITE.search(source)
+                or operation == "createQueryBuilder"
+                and _QUERY_BUILDER_WRITE.search(source) else "read",
             )
             evidence.setdefault(entity_name, reachable_method)
         for entity_name in _GET_REPOSITORY.findall(source):
             if entity_name in entities:
                 accesses[entity_name].add("read")
+                evidence.setdefault(entity_name, reachable_method)
+        for entity_name in entities:
+            operators = re.findall(
+                rf"\.\s*(from|innerJoin|innerJoinAndSelect|leftJoin|"
+                rf"leftJoinAndSelect|update)\s*\(\s*{re.escape(entity_name)}\b",
+                source,
+                re.IGNORECASE,
+            )
+            for operator in operators:
+                reference_access = (
+                    "write" if operator.casefold() == "update"
+                    or operator.casefold() == "from"
+                    and _QUERY_BUILDER_WRITE.search(source) else "read"
+                )
+                accesses[entity_name].add(reference_access)
                 evidence.setdefault(entity_name, reachable_method)
 
     result = []

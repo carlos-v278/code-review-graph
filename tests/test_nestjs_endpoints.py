@@ -83,3 +83,29 @@ export function unrelated() {
         if item.extra["route"].startswith("/admin/organizations?")
     )
     assert organization.extra["dynamic"] is False
+
+
+def test_resolves_provider_service_this_base_url(tmp_path: Path) -> None:
+    source = b"""
+export class ProviderRecoveryService {
+  private static readonly BASE_URL = '/provider/recovery';
+
+  static async listRecoveries() {
+    return api.get(this.BASE_URL);
+  }
+
+  static async getPendingInvoice() {
+    return api.get(`${this.BASE_URL}/pending-invoice`);
+  }
+}
+"""
+    nodes, _ = CodeParser().parse_bytes(
+        tmp_path / "provider-recovery.service.ts", source,
+    )
+    assert {
+        (node.extra["route"], node.extra["dynamic"])
+        for node in nodes if node.kind == "HttpRequest"
+    } == {
+        ("/provider/recovery", False),
+        ("/provider/recovery/pending-invoice", False),
+    }

@@ -89,4 +89,3 @@ def match_frontend_routes(
         for endpoint in ordered:
             ambiguities[endpoint.qualified_name].append(ambiguity)
     return dict(endpoint_requests), dict(ambiguities)
-

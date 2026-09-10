@@ -645,17 +645,25 @@ def _run_graph_tool_command(args, repo_root: Path) -> None:
     elif args.command in ("journeys", "journey", "journeys-affected"):
         from .graph import GraphStore
         from .incremental import get_changed_files, get_db_path
+        from .journey_results import infer_journey_selector
         from .journeys import build_journeys, format_journeys_text
 
         try:
             with GraphStore(get_db_path(repo_root)) as store:
-                result = build_journeys(
-                    store, repo_root, api_prefixes=args.api_prefix,
+                full_details = args.details and args.command == "journey"
+                lookup_selector = None
+                lookup_value = str(getattr(args, "use_case", "") or "")
+                if args.command == "journey":
+                    lookup_selector = infer_journey_selector(
+                        lookup_value, repo_root,
+                    )
+                kwargs = dict(
+                    api_prefixes=args.api_prefix,
                     consumer_manifest=args.consumer_manifest,
                     consumer_types=args.consumer_type,
                     confidences=args.confidence, limit=args.limit,
                     target=getattr(args, "use_case", None),
-                    details=args.details,
+                    details=full_details,
                     max_depth=args.depth,
                     max_consumers=args.max_consumers,
                     max_tests=args.max_tests,
@@ -667,6 +675,30 @@ def _run_graph_tool_command(args, repo_root: Path) -> None:
                         if args.command == "journeys-affected" else None
                     ),
                 )
+                if lookup_selector:
+                    kwargs.update(target=None, **lookup_selector)
+                result = build_journeys(store, repo_root, **kwargs)
+                if args.command == "journey" and result.get("status") == "not_found":
+                    lookup_selector = {"source_component": lookup_value}
+                    kwargs.update(target=None, **lookup_selector)
+                    result = build_journeys(store, repo_root, **kwargs)
+                if lookup_selector and result.get("status") == "ok":
+                    if result.get("total") == 0:
+                        result = {
+                            "status": "not_found", "target": lookup_value,
+                            "candidates": [],
+                        }
+                    else:
+                        result.setdefault("query", {})["lookup"] = {
+                            "value": lookup_value,
+                            "kind": next(iter(lookup_selector)).removeprefix("source_"),
+                        }
+                if args.details and not full_details:
+                    result.setdefault("query", {})["details_notice"] = (
+                        "batch output stays summarized; use "
+                        "`code-review-graph journey <selector> --details` "
+                        "for complete paths"
+                    )
         except ValueError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             raise SystemExit(2) from exc
@@ -1227,7 +1259,7 @@ def main() -> None:
     flow_cmd.add_argument("--source", action="store_true", help="Include source snippets")
     flow_cmd.add_argument("--repo", default=None, help="Repository root (auto-detected)")
 
-    def add_journey_options(command) -> None:
+    def add_journey_options(command, *, full_details: bool = False) -> None:
         command.add_argument(
             "--format", choices=["text", "json"], default="text",
             help="Output format (default: text)",
@@ -1268,7 +1300,11 @@ def main() -> None:
         )
         command.add_argument(
             "--details", action="store_true",
-            help="Show complete consumer and repository implementation paths",
+            help=(
+                "Show complete consumer and repository implementation paths"
+                if full_details else
+                "Accepted for compatibility; batch output remains summarized"
+            ),
         )
         command.add_argument("--repo", default=None, help="Repository root (auto-detected)")
 
@@ -1290,7 +1326,7 @@ def main() -> None:
         "journey", help="Show one backend use-case journey",
     )
     journey_cmd.add_argument("use_case", help="Use-case name or qualified name")
-    add_journey_options(journey_cmd)
+    add_journey_options(journey_cmd, full_details=True)
     affected_cmd = sub.add_parser(
         "journeys-affected",
         help="List journeys related to files changed in a Git diff",

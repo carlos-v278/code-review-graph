@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from code_review_graph.graph import GraphStore
+from code_review_graph.journey_results import route_selection_matches
 from code_review_graph.journeys import (
     build_journeys,
     format_journeys_text,
@@ -196,7 +197,9 @@ def test_reports_unresolved_repository_as_incomplete(tmp_path: Path) -> None:
 
 
 def test_reports_typeorm_write_access(tmp_path: Path) -> None:
-    store, root = _fixture(tmp_path, repository_operation="save")
+    store, root = _fixture(
+        tmp_path, repository_source="return this.repository\n  .save(value);",
+    )
     try:
         result = build_journeys(
             store, root, target="GetAccountUseCase", details=True,
@@ -205,6 +208,83 @@ def test_reports_typeorm_write_access(tmp_path: Path) -> None:
         store.close()
     method = result["journeys"][0]["repositories"][0]["methods"][0]
     assert method["persistence"][0]["relation"] == "writes_to"
+
+
+def test_ambiguous_use_case_lists_qualified_commands(tmp_path: Path) -> None:
+    store, root = _fixture(tmp_path)
+    duplicate = root / "backend/src/application/use-cases/other/get.use-case.ts"
+    store.upsert_node(_node("Class", "GetAccountUseCase", duplicate))
+    try:
+        result = build_journeys(store, root, target="GetAccountUseCase")
+    finally:
+        store.close()
+    assert result["status"] == "ambiguous"
+    assert result["candidate_count"] == 2
+    assert all(
+        item["command"].startswith("code-review-graph journey ")
+        and item["command"].endswith(" --details")
+        for item in result["candidate_commands"]
+    )
+
+
+def test_resolves_multiline_typeorm_calls_and_entity_references(tmp_path: Path) -> None:
+    store, root = _fixture(
+        tmp_path,
+        repository_source=(
+            "return this.repository\n"
+            "  .createQueryBuilder('account')\n"
+            "  .leftJoin(AccountOrmEntity, 'joined', 'joined.id = account.id')\n"
+            "  .getMany();"
+        ),
+    )
+    try:
+        result = build_journeys(
+            store, root, target="GetAccountUseCase", details=True,
+        )
+    finally:
+        store.close()
+    method = result["journeys"][0]["repositories"][0]["methods"][0]
+    assert method["resolution"] == "implementation"
+    assert method["persistence"][0]["table"] == "accounts"
+
+
+def test_does_not_treat_an_entity_name_as_database_access(tmp_path: Path) -> None:
+    store, root = _fixture(
+        tmp_path,
+        repository_source="const entityType = AccountOrmEntity; return [];",
+    )
+    try:
+        result = build_journeys(
+            store, root, target="GetAccountUseCase", details=True,
+        )
+    finally:
+        store.close()
+    method = result["journeys"][0]["repositories"][0]["methods"][0]
+    assert method["persistence"] == []
+    assert method["resolution"] == "implementation_partial"
+
+
+def test_includes_inline_mapping_method_in_implementation_path(tmp_path: Path) -> None:
+    store, root = _fixture(tmp_path)
+    repo_impl = root / "backend/src/infrastructure/TypeOrmAccountRepository.ts"
+    store.upsert_node(_node(
+        "Function", "toListItem", repo_impl, "TypeOrmAccountRepository",
+    ))
+    store.upsert_edge(EdgeInfo(
+        "CALLS", _qn(repo_impl, "TypeOrmAccountRepository.findById"),
+        _qn(repo_impl, "TypeOrmAccountRepository.toListItem"), str(repo_impl), 25,
+    ))
+    try:
+        result = build_journeys(
+            store, root, target="GetAccountUseCase", details=True,
+        )
+    finally:
+        store.close()
+    method = result["journeys"][0]["repositories"][0]["methods"][0]
+    assert any(
+        path[-1]["name"] == "TypeOrmAccountRepository.toListItem"
+        for path in method["implementation_paths"]
+    )
 
 
 def test_resolves_typeorm_repository_getter_alias(tmp_path: Path) -> None:
@@ -365,6 +445,55 @@ def test_filters_journeys_from_component_file_and_route(tmp_path: Path) -> None:
     assert by_diff["journeys"][0]["selection"][0]["reason"] in {
         "upstream graph dependency", "frontend route path",
     }
+
+
+def test_qualified_route_requires_exact_method_and_path() -> None:
+    get_consumer = {"method": "GET", "route": "/api/admin/organizations"}
+    post_consumer = {"method": "POST", "route": "/api/admin/organizations"}
+    assert route_selection_matches(
+        [get_consumer], "GET /admin/organizations", ["/api"],
+    )
+    parametrized_get = {
+        "method": "GET", "route": "/api/admin/organizations/:id",
+    }
+    assert route_selection_matches(
+        [parametrized_get], "GET /admin/organizations/123", ["/api"],
+    )
+    assert not route_selection_matches(
+        [post_consumer], "GET /admin/organizations", ["/api"],
+    )
+    assert not route_selection_matches(
+        [parametrized_get], "POST /admin/organizations/123", ["/api"],
+    )
+    assert route_selection_matches(
+        [post_consumer], "/admin/organizations", ["/api"],
+    )
+
+
+def test_frontend_paths_respect_depth_and_consumer_limits(tmp_path: Path) -> None:
+    store, root = _fixture(tmp_path)
+    request_source = _qn(root / "frontend/src/useAccount.ts", "load")
+    for index in range(3):
+        view = root / f"frontend/src/views/Account{index}.vue"
+        store.upsert_node(_node("Function", f"open{index}", view))
+        store.upsert_edge(EdgeInfo(
+            "CALLS", _qn(view, f"open{index}"), request_source, str(view), 12,
+        ))
+    try:
+        result = build_journeys(
+            store, root, api_prefixes=["/api"], target="GetAccountUseCase",
+            details=True, max_depth=2, max_consumers=1,
+        )
+    finally:
+        store.close()
+    frontend = next(
+        item for item in result["journeys"][0]["consumers"]
+        if item["type"] == "frontend"
+    )
+    request = frontend["frontend_requests"][0]
+    assert len(request["paths"]) == 1
+    assert request["paths_hidden"] == 3
+    assert request["sources_hidden"] == 4
 
 
 def test_ambiguous_route_lists_candidates_with_evidence(tmp_path: Path) -> None:

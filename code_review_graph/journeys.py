@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterable
@@ -136,6 +137,17 @@ def build_journeys(
                 "status": "ambiguous", "target": target,
                 "candidates": [n.qualified_name for n in matches[:limit]],
                 "candidate_count": len(matches),
+                "candidate_commands": [
+                    {
+                        "qualified_name": n.qualified_name,
+                        "command": (
+                            "code-review-graph journey "
+                            f"{shlex.quote(n.qualified_name)} --details"
+                        ),
+                    }
+                    for n in matches[:limit]
+                ],
+                "candidates_hidden": max(0, len(matches) - limit),
             }
         use_cases = matches
 
@@ -274,13 +286,20 @@ def build_journeys(
                         request_edge = next(iter(request_edges.get(
                             request.qualified_name, [],
                         )), None)
+                        prefix_depth = max(0, max_depth - distance)
                         prefixes = (
                             frontend_prefixes(
                                 request_edge.source_qualified, incoming,
                                 nodes_by_qn=nodes_by_qn, root=root,
+                                max_depth=prefix_depth,
                             )
                             if request_edge is not None else []
                         )
+                        if request_edge is not None:
+                            depth_hidden += hidden_beyond_depth(
+                                {request_edge.source_qualified}, incoming,
+                                prefix_depth,
+                            )
                         source_steps = [
                             step for prefix in prefixes for step in prefix
                         ]
@@ -350,9 +369,13 @@ def build_journeys(
                                 qualified_names, relations,
                                 nodes_by_qn=nodes_by_qn, root=root,
                             )
-                            frontend_request["paths"] = (
+                            paths = (
                                 [[*prefix, *base_path[1:]] for prefix in prefixes]
                                 or [base_path]
+                            )
+                            frontend_request["paths"] = paths[:max_consumers]
+                            frontend_request["paths_hidden"] = max(
+                                0, len(paths) - max_consumers,
                             )
                         frontend_requests.append(frontend_request)
                     consumer["frontend_requests"] = frontend_requests
@@ -501,7 +524,9 @@ def build_journeys(
             source_component=source_component,
             source_files=changed_files,
         ))
-        selection.extend(route_selection_matches(consumers, source_route))
+        selection.extend(route_selection_matches(
+            consumers, source_route, api_prefixes,
+        ))
         if selection_requested and not selection:
             continue
         journey = {
