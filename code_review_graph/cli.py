@@ -530,6 +530,7 @@ def _positive_int(value: str) -> int:
 _GRAPH_TOOL_COMMANDS = {
     "query",
     "impact",
+    "delivery-context",
     "search",
     "flows",
     "flow",
@@ -607,7 +608,18 @@ def _run_graph_tool_command(args, repo_root: Path) -> None:
     from . import tools
 
     root = str(repo_root)
-    if args.command == "query":
+    if args.command == "delivery-context":
+        result = tools.get_delivery_context(
+            base=args.base,
+            repo_root=root,
+            max_depth=args.depth,
+            max_results=args.max_results,
+            detail_level=args.detail_level,
+        )
+        if args.format == "text":
+            print(tools.format_delivery_context_text(result))
+            return
+    elif args.command == "query":
         result = tools.query_graph(
             pattern=args.pattern,
             target=args.target,
@@ -745,7 +757,31 @@ def _run_graph_tool_command(args, repo_root: Path) -> None:
             file_pattern=args.path,
             repo_root=root,
         )
-    print(json.dumps(result, indent=2, default=str))
+    if args.command == "impact" and args.format == "text":
+        print(_format_impact_text(result))
+    else:
+        print(json.dumps(result, indent=2, default=str))
+
+
+def _format_impact_text(result: dict) -> str:
+    """Render the already-bounded impact payload without expanding it."""
+    lines = [result.get("summary", "Impact unavailable.")]
+    for field, label in (
+        ("changed_files", "Changed files"),
+        ("changed_nodes", "Changed nodes"),
+        ("impacted_nodes", "Impacted nodes"),
+        ("impacted_files", "Impacted files"),
+        ("edges", "Edges"),
+    ):
+        shown = len(result.get(field, []))
+        total = int(result.get(f"{field}_total", shown))
+        lines.append(
+            f"{label}: {total}"
+            + (f"; showing {shown} of {total}" if shown < total else "")
+        )
+    if result.get("truncated"):
+        lines.append("Output truncated by --max-results.")
+    return "\n".join(lines)
 
 
 def main() -> None:
@@ -1230,7 +1266,30 @@ def main() -> None:
     impact_cmd.add_argument("--depth", type=_non_negative_int, default=2)
     impact_cmd.add_argument("--max-results", type=_positive_int, default=500)
     impact_cmd.add_argument("--base", default="HEAD~1")
+    impact_cmd.add_argument(
+        "--format",
+        choices=["json", "text"],
+        default="json",
+        help="Output format (default: json)",
+    )
     impact_cmd.add_argument("--repo", default=None, help="Repository root (auto-detected)")
+
+    delivery_cmd = sub.add_parser(
+        "delivery-context",
+        help="Emit one bounded delivery evidence snapshot",
+    )
+    delivery_cmd.add_argument("--base", default="HEAD~1", help="Git diff base")
+    delivery_cmd.add_argument("--depth", type=_non_negative_int, default=2)
+    delivery_cmd.add_argument("--max-results", type=_positive_int, default=20)
+    delivery_cmd.add_argument(
+        "--detail-level",
+        choices=["minimal", "standard"],
+        default="minimal",
+    )
+    delivery_cmd.add_argument(
+        "--format", choices=["text", "json"], default="text",
+    )
+    delivery_cmd.add_argument("--repo", default=None, help="Repository root (auto-detected)")
 
     search_cmd = sub.add_parser("search", help="Search graph entities")
     search_cmd.add_argument("query", help="Search string")
@@ -2037,13 +2096,36 @@ def main() -> None:
             stats = store.get_stats()
             stored_branch = store.get_metadata("git_branch")
             stored_sha = store.get_metadata("git_head_sha")
-            from .incremental import _git_branch_info, detect_vcs
+            from .incremental import (
+                _git_branch_info,
+                detect_vcs,
+                get_worktree_snapshot,
+            )
 
             vcs = detect_vcs(repo_root)
             current_branch = None
             current_sha = None
             if vcs == "git":
                 current_branch, current_sha = _git_branch_info(repo_root)
+            stored_worktree_fingerprint = store.get_metadata(
+                "git_worktree_fingerprint"
+            )
+            worktree = get_worktree_snapshot(repo_root)
+            head_matches_build = (
+                current_sha == stored_sha
+                if current_sha and stored_sha else None
+            )
+            worktree_matches_build = (
+                worktree["fingerprint"] == stored_worktree_fingerprint
+                if worktree["available"] and stored_worktree_fingerprint else None
+            )
+            freshness = (
+                "stale_head" if head_matches_build is False
+                else "stale_worktree" if worktree_matches_build is False
+                else "current"
+                if head_matches_build is True and worktree_matches_build is True
+                else "unknown"
+            )
             stored_svn_branch = store.get_metadata("svn_branch")
             stored_rev = store.get_metadata("svn_revision")
 
@@ -2059,6 +2141,12 @@ def main() -> None:
                     "built_at_commit": stored_sha,
                     "current_branch": current_branch,
                     "current_sha": current_sha,
+                    "freshness": freshness,
+                    "head_matches_build": head_matches_build,
+                    "worktree_dirty": worktree["dirty"],
+                    "worktree_files_count": worktree["files_count"],
+                    "worktree_fingerprint": worktree["fingerprint"],
+                    "worktree_matches_build": worktree_matches_build,
                     "svn_branch": stored_svn_branch,
                     "svn_revision": stored_rev,
                 }))
@@ -2068,6 +2156,12 @@ def main() -> None:
                 print(f"Files: {stats.files_count}")
                 print(f"Languages: {', '.join(stats.languages)}")
                 print(f"Last updated: {stats.last_updated or 'never'}")
+                print(f"Freshness: {freshness}")
+                if worktree["available"]:
+                    print(
+                        f"Working tree: {worktree['files_count']} changed file(s); "
+                        f"graph match: {worktree_matches_build}"
+                    )
                 if stored_branch:
                     print(f"Built on branch: {stored_branch}")
                 if stored_sha:

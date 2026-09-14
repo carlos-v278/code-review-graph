@@ -12,7 +12,13 @@ import code_review_graph.tools._common as common_module
 import code_review_graph.tools.analysis_tools as analysis_module
 import code_review_graph.tools.docs as docs_module
 import code_review_graph.tools.query as query_module
-from code_review_graph.graph import GraphStore, _sanitize_name, node_to_dict
+from code_review_graph.graph import (
+    GraphEdge,
+    GraphNode,
+    GraphStore,
+    _sanitize_name,
+    node_to_dict,
+)
 from code_review_graph.incremental import full_build
 from code_review_graph.parser import EdgeInfo, NodeInfo
 from code_review_graph.tools import (
@@ -593,6 +599,75 @@ class TestGraphPathResolution:
         )
 
         assert any(n["name"] == "handle" for n in result["changed_nodes"])
+
+    def test_impact_max_results_bounds_every_result_section(
+        self, tmp_path, monkeypatch,
+    ):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+        changed_files = [f"file_{index}.py" for index in range(3)]
+        for file_path in changed_files:
+            (repo / file_path).write_text("value = 1\n", encoding="utf-8")
+
+        nodes = [
+            GraphNode(
+                id=index,
+                kind="Function",
+                name=f"changed_{index}",
+                qualified_name=f"/repo/file_{index}.py::changed_{index}",
+                file_path=f"/repo/file_{index}.py",
+                line_start=1,
+                line_end=1,
+                language="python",
+                parent_name=None,
+                params=None,
+                return_type=None,
+                is_test=False,
+                file_hash=None,
+                extra={},
+            )
+            for index in range(3)
+        ]
+        edges = [
+            GraphEdge(
+                id=index,
+                kind="CALLS",
+                source_qualified=nodes[index].qualified_name,
+                target_qualified=nodes[(index + 1) % 3].qualified_name,
+                file_path=nodes[index].file_path,
+                line=1,
+                extra={},
+            )
+            for index in range(3)
+        ]
+        store = MagicMock()
+        store.get_nodes_by_file.return_value = nodes
+        store.get_files_matching.return_value = []
+        store.get_impact_radius.return_value = {
+            "changed_nodes": nodes,
+            "impacted_nodes": nodes,
+            "impacted_files": [node.file_path for node in nodes],
+            "edges": edges,
+            "impact_scores": {},
+            "truncated": False,
+            "total_impacted": 3,
+        }
+        monkeypatch.setattr(query_module, "_get_store", lambda _root: (store, repo))
+
+        result = get_impact_radius(
+            changed_files=changed_files,
+            max_results=1,
+            repo_root=str(repo),
+        )
+
+        for field in (
+            "changed_files", "changed_nodes", "impacted_nodes",
+            "impacted_files", "edges",
+        ):
+            assert len(result[field]) == 1
+            assert result[f"{field}_total"] == 3
+        assert result["truncated"] is True
 
     def test_file_summary_resolves_repo_relative_target(self, tmp_path):
         repo = tmp_path / "fixtures" / "sample_repo"
@@ -2383,6 +2458,7 @@ class TestGraphProvenance:
             "updated_at": "not-a-date",
             "built_on_branch": "feature/malformed-time",
             "built_at_sha": "cafebabe",
+            "freshness": "unknown",
         }
 
     def test_naive_future_timestamp_clamps_age(self, tmp_path):

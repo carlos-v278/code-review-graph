@@ -20,7 +20,13 @@ from ..uncertainty import (
     empty_query_confidence,
     empty_search_confidence,
 )
-from ._common import _BUILTIN_CALL_NAMES, _get_store, _resolve_graph_file_paths
+from ._common import (
+    _BUILTIN_CALL_NAMES,
+    _bounded,
+    _get_store,
+    _resolve_graph_file_paths,
+    _shown_of,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +55,7 @@ _QUERY_PATTERNS = {
 
 _JAVA_FQN_PART = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
 _MAX_FQN_CANDIDATES = 100
+_MAX_IMPACT_RESULTS = 100
 
 
 def _looks_like_java_method_fqn(target: str) -> bool:
@@ -155,33 +162,56 @@ def get_impact_radius(
         original_tokens = estimate_file_tokens(root, changed_files)
         abs_files = _resolve_graph_file_paths(store, root, changed_files)
         result = store.get_impact_radius(
-            abs_files, max_depth=max_depth, max_nodes=max_results
+            abs_files,
+            max_depth=max_depth,
+            max_nodes=min(max_results, _MAX_IMPACT_RESULTS),
         )
 
         impact_scores = result.get("impact_scores", {})
-        changed_dicts = [node_to_dict(n) for n in result["changed_nodes"]]
+        shown_files, files_total, files_cut = _bounded(
+            changed_files, max_results, _MAX_IMPACT_RESULTS,
+        )
+        changed_nodes, changed_nodes_total, changed_cut = _bounded(
+            result["changed_nodes"], max_results, _MAX_IMPACT_RESULTS,
+        )
+        impacted_nodes, _visible_impacted_total, impacted_visible_cut = _bounded(
+            result["impacted_nodes"], max_results, _MAX_IMPACT_RESULTS,
+        )
+        impacted_files, impacted_files_total, impacted_files_cut = _bounded(
+            result["impacted_files"], max_results, _MAX_IMPACT_RESULTS,
+        )
+        edges, edges_total, edges_cut = _bounded(
+            result["edges"], max_results, _MAX_IMPACT_RESULTS,
+        )
+        total_impacted = result["total_impacted"]
+        impacted_cut = impacted_visible_cut or total_impacted > len(impacted_nodes)
+        truncated = (
+            result["truncated"] or files_cut or changed_cut or impacted_cut
+            or impacted_files_cut or edges_cut
+        )
+
+        changed_dicts = [node_to_dict(n) for n in changed_nodes]
         impacted_dicts = []
-        for node in result["impacted_nodes"]:
+        for node in impacted_nodes:
             node_dict = node_to_dict(node)
             score = impact_scores.get(node.qualified_name)
             if score is not None:
                 node_dict["impact_score"] = score
             impacted_dicts.append(node_dict)
-        edge_dicts = [edge_to_dict(e) for e in result["edges"]]
-        truncated = result["truncated"]
-        total_impacted = result["total_impacted"]
+        edge_dicts = [edge_to_dict(e) for e in edges]
 
         summary_parts = [
-            f"Blast radius for {len(changed_files)} changed file(s):",
-            f"  - {len(changed_dicts)} nodes directly changed",
-            f"  - {len(impacted_dicts)} nodes impacted (within {max_depth} hops)",
-            f"  - {len(result['impacted_files'])} additional files affected",
+            f"Blast radius for {files_total} changed file(s)"
+            + _shown_of(len(shown_files), files_total) + ":",
+            f"  - {changed_nodes_total} nodes directly changed"
+            + _shown_of(len(changed_dicts), changed_nodes_total),
+            f"  - {total_impacted} nodes impacted (within {max_depth} hops)"
+            + _shown_of(len(impacted_dicts), total_impacted),
+            f"  - {impacted_files_total} additional files affected"
+            + _shown_of(len(impacted_files), impacted_files_total),
+            f"  - {edges_total} connecting edges"
+            + _shown_of(len(edge_dicts), edges_total),
         ]
-        if truncated:
-            summary_parts.append(
-                f"  - Results truncated: showing {len(impacted_dicts)}"
-                f" of {total_impacted} impacted nodes"
-            )
 
         # "Nothing is impacted" and "nothing about these files is indexed"
         # look identical to a reader without this marker.
@@ -209,7 +239,7 @@ def get_impact_radius(
                 "status": "ok",
                 "summary": "\n".join(summary_parts),
                 "risk": risk,
-                "impacted_file_count": len(result["impacted_files"]),
+                "impacted_file_count": impacted_files_total,
                 "key_entities": key_entities,
                 "truncated": truncated,
                 "nodes_omitted": max(0, total_impacted - len(impacted_dicts)),
@@ -222,11 +252,16 @@ def get_impact_radius(
         response: dict[str, Any] = {
             "status": "ok",
             "summary": "\n".join(summary_parts),
-            "changed_files": changed_files,
+            "changed_files": shown_files,
+            "changed_files_total": files_total,
             "changed_nodes": changed_dicts,
+            "changed_nodes_total": changed_nodes_total,
             "impacted_nodes": impacted_dicts,
-            "impacted_files": result["impacted_files"],
+            "impacted_nodes_total": total_impacted,
+            "impacted_files": impacted_files,
+            "impacted_files_total": impacted_files_total,
             "edges": edge_dicts,
+            "edges_total": edges_total,
             "truncated": truncated,
             "total_impacted": total_impacted,
             "nodes_omitted": max(0, total_impacted - len(impacted_dicts)),

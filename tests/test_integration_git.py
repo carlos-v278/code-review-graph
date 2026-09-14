@@ -32,6 +32,7 @@ from code_review_graph.incremental import (
     incremental_update,
     resolve_incremental_base,
 )
+from code_review_graph.tools._common import graph_provenance
 from code_review_graph.tools.build import build_or_update_graph
 from code_review_graph.wiki import get_wiki_page
 
@@ -105,6 +106,80 @@ def test_all_changed_files_keeps_diff_and_untracked(git_repo: Path) -> None:
         "hello.py",
         "untracked.py",
     ]
+
+
+@pytest.mark.parametrize("change_kind", ["staged", "unstaged", "untracked"])
+def test_graph_provenance_tracks_worktree_content_freshness(
+    git_repo: Path,
+    change_kind: str,
+) -> None:
+    build_or_update_graph(
+        full_rebuild=True,
+        repo_root=str(git_repo),
+        postprocess="none",
+    )
+    initial = graph_provenance(str(git_repo))
+    assert initial["freshness"] == "current"
+
+    if change_kind == "untracked":
+        (git_repo / "new.py").write_text("value = 1\n", encoding="utf-8")
+    else:
+        hello = git_repo / "hello.py"
+        hello.write_text(
+            hello.read_text(encoding="utf-8") + "\nvalue = 1\n",
+            encoding="utf-8",
+        )
+        if change_kind == "staged":
+            _git_ok(git_repo, "add", "hello.py")
+
+    stale = graph_provenance(str(git_repo))
+    assert stale["freshness"] == "stale_worktree"
+    assert stale["head_matches_build"] is True
+    assert stale["worktree_matches_build"] is False
+    assert stale["worktree_dirty"] is True
+
+    build_or_update_graph(
+        full_rebuild=False,
+        repo_root=str(git_repo),
+        base=None,
+        postprocess="none",
+    )
+    refreshed = graph_provenance(str(git_repo))
+    assert refreshed["freshness"] == "current"
+    assert refreshed["worktree_matches_build"] is True
+
+
+def test_status_json_reports_worktree_content_staleness(
+    git_repo: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    from code_review_graph import cli
+
+    build_or_update_graph(
+        full_rebuild=True,
+        repo_root=str(git_repo),
+        postprocess="none",
+    )
+    capsys.readouterr()
+    hello = git_repo / "hello.py"
+    hello.write_text(
+        hello.read_text(encoding="utf-8") + "\nvalue = 1\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["code-review-graph", "status", "--repo", str(git_repo), "--json"],
+    )
+
+    cli.main()
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["freshness"] == "stale_worktree"
+    assert payload["head_matches_build"] is True
+    assert payload["worktree_matches_build"] is False
+    assert payload["worktree_files_count"] == 1
 
 
 @pytest.fixture()

@@ -8,7 +8,7 @@ from .context_savings import (
     format_context_savings,
 )
 
-__version__ = "2.5.1"
+__version__ = "2.6.0"
 
 __all__ = [
     "__version__",

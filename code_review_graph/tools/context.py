@@ -87,10 +87,10 @@ def get_minimal_context(
             )
 
         provenance = graph_provenance(str(root))
-        if provenance and provenance.get("head_matches_build") is False:
+        if provenance and provenance.get("freshness") not in (None, "current"):
             return _not_ready(
                 "stale_graph",
-                "The graph was built at a different Git commit. "
+                "The graph does not match the current commit or working tree. "
                 "Update it before requesting context.",
             )
 

@@ -42,6 +42,7 @@ from .tools import (
     get_architecture_overview_func,
     get_bridge_nodes_func,
     get_community_func,
+    get_delivery_context,
     get_docs_section,
     get_flow,
     get_hub_nodes_func,
@@ -222,6 +223,7 @@ def get_minimal_context_tool(
 def get_impact_radius_tool(
     changed_files: Optional[list[str]] = None,
     max_depth: int = 2,
+    max_results: int = 500,
     repo_root: Optional[str] = None,
     base: str = "HEAD~1",
     detail_level: str = "standard",
@@ -234,6 +236,7 @@ def get_impact_radius_tool(
     Args:
         changed_files: List of changed file paths (relative to repo root). Auto-detected if omitted.
         max_depth: Number of hops to traverse in the dependency graph. Default: 2.
+        max_results: Maximum rows in every result section. Default: 500.
         repo_root: Repository root path. Auto-detected if omitted.
         base: Git ref for auto-detecting changes. Default: HEAD~1.
         detail_level: "standard" for full output, "minimal" for compact summary. Default: standard.
@@ -241,8 +244,40 @@ def get_impact_radius_tool(
     root = _resolve_repo_root(repo_root)
     return with_provenance(get_impact_radius(
         changed_files=changed_files, max_depth=max_depth,
+        max_results=max_results,
         repo_root=root, base=base, detail_level=detail_level,
     ), root)
+
+
+@mcp.tool()
+async def get_delivery_context_tool(
+    base: str = "HEAD~1",
+    changed_files: Optional[list[str]] = None,
+    repo_root: Optional[str] = None,
+    max_depth: int = 2,
+    max_results: int = 20,
+    detail_level: str = "minimal",
+) -> dict:
+    """Return one compact, deterministic delivery evidence snapshot.
+
+    Combines graph freshness, changed files, impact, affected journeys,
+    direct/indirect test coverage, unattached files, and a content fingerprint.
+    The default is bounded and source-free; use ``detail_level=standard`` for
+    review priorities and changed-function records.
+    """
+    root = _resolve_repo_root(repo_root)
+
+    def _run() -> dict:
+        return with_provenance(get_delivery_context(
+            base=base,
+            changed_files=changed_files,
+            repo_root=root,
+            max_depth=max_depth,
+            max_results=max_results,
+            detail_level=detail_level,
+        ), root)
+
+    return await asyncio.to_thread(_run)
 
 
 @mcp.tool()

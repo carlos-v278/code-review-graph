@@ -778,6 +778,16 @@ def _store_vcs_metadata(repo_root: Path, store: "GraphStore") -> None:
             store.set_metadata("git_branch", branch)
         if sha:
             store.set_metadata("git_head_sha", sha)
+        snapshot = get_worktree_snapshot(repo_root)
+        if snapshot["available"]:
+            store.set_metadata(
+                "git_worktree_fingerprint",
+                str(snapshot["fingerprint"]),
+            )
+            store.set_metadata(
+                "git_worktree_files_count",
+                str(snapshot["files_count"]),
+            )
     elif vcs == "svn":
         branch, rev = _svn_revision_info(repo_root)
         if branch:
@@ -925,6 +935,12 @@ def get_staged_and_unstaged(repo_root: Path) -> list[str]:
     """Get all modified files (staged + unstaged + untracked)."""
     if detect_vcs(repo_root) == "svn":
         return _get_svn_changed_files(repo_root)
+    files, _available = _get_git_worktree_paths(repo_root)
+    return files
+
+
+def _get_git_worktree_paths(repo_root: Path) -> tuple[list[str], bool]:
+    """Return porcelain paths and whether Git reported them successfully."""
     try:
         result = subprocess.run(
             [
@@ -941,7 +957,7 @@ def get_staged_and_unstaged(repo_root: Path) -> list[str]:
         )
         if result.returncode != 0:
             logger.warning("git status failed while discovering working-tree files")
-            return []
+            return [], False
         files: list[str] = []
         records = result.stdout.split(b"\0")
         index = 0
@@ -955,9 +971,58 @@ def get_staged_and_unstaged(repo_root: Path) -> list[str]:
                 if b"R" in status or b"C" in status:
                     index += 1
             index += 1
-        return files
+        return files, True
     except (FileNotFoundError, subprocess.TimeoutExpired):
-        return []
+        return [], False
+
+
+def get_worktree_snapshot(repo_root: Path) -> dict[str, Any]:
+    """Hash staged, unstaged, and untracked working-tree content."""
+    if detect_vcs(repo_root) != "git":
+        return {
+            "available": False,
+            "dirty": False,
+            "files": [],
+            "files_count": 0,
+            "fingerprint": None,
+        }
+    files, available = _get_git_worktree_paths(repo_root)
+    ordered = sorted(dict.fromkeys(Path(path).as_posix() for path in files))
+    if not available:
+        return {
+            "available": False,
+            "dirty": False,
+            "files": [],
+            "files_count": 0,
+            "fingerprint": None,
+        }
+
+    digest = hashlib.sha256()
+    for relative in ordered:
+        digest.update(relative.encode("utf-8", errors="surrogateescape"))
+        digest.update(b"\0")
+        path = repo_root / relative
+        if path.is_symlink():
+            digest.update(b"symlink\0")
+            digest.update(os.fsencode(os.readlink(path)))
+        elif path.is_file():
+            digest.update(b"file\0")
+            try:
+                with path.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        digest.update(chunk)
+            except OSError:
+                digest.update(b"unreadable")
+        else:
+            digest.update(b"missing")
+        digest.update(b"\0")
+    return {
+        "available": True,
+        "dirty": bool(ordered),
+        "files": ordered,
+        "files_count": len(ordered),
+        "fingerprint": digest.hexdigest(),
+    }
 
 
 def get_all_changed_files(repo_root: Path, base: str = "HEAD~1") -> list[str]:
@@ -965,6 +1030,7 @@ def get_all_changed_files(repo_root: Path, base: str = "HEAD~1") -> list[str]:
     diff_files = get_changed_files(repo_root, base)
     working_tree_files = get_staged_and_unstaged(repo_root)
     return list(dict.fromkeys([*diff_files, *working_tree_files]))
+
 
 def get_all_tracked_files(
     repo_root: Path,
@@ -1412,6 +1478,9 @@ def incremental_update(
     stale_files = _reconcile_stale_files(repo_root, store) if reconcile_stale else []
 
     if not changed_files and not stale_files:
+        store.set_metadata("last_updated", time.strftime("%Y-%m-%dT%H:%M:%S"))
+        _store_vcs_metadata(repo_root, store)
+        store.commit()
         return {
             "files_updated": 0,
             "total_nodes": 0,
@@ -1511,12 +1580,12 @@ def incremental_update(
 
     removed_files = store.remove_files_permanently(sorted(missing_paths)) if missing_paths else 0
     files_updated = parsed_files + len(stale_files) + removed_files
+    store.set_metadata("last_updated", time.strftime("%Y-%m-%dT%H:%M:%S"))
     if files_updated:
-        store.set_metadata("last_updated", time.strftime("%Y-%m-%dT%H:%M:%S"))
         store.set_metadata("last_build_type", "incremental")
         store.set_metadata(_CPP_IDENTITY_METADATA_KEY, CPP_IDENTITY_VERSION)
-        _store_vcs_metadata(repo_root, store)
-        store.commit()
+    _store_vcs_metadata(repo_root, store)
+    store.commit()
 
     # Only re-run language-specific resolvers when the relevant files changed.
     python_changed = any(

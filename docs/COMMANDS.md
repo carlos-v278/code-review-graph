@@ -123,11 +123,24 @@ base: str = "HEAD~1"
 ```
 changed_files: list[str] | None  # Auto-detected from VCS
 max_depth: int = 2               # Hops in graph
+max_results: int = 500           # Every result list; hard ceiling 100
 repo_root: str | None
 base: str = "HEAD~1"
 detail_level: str = "standard"   # "standard" or "minimal"
 ```
 Relevant responses may include compact estimated `context_savings` metadata.
+
+#### `get_delivery_context_tool`
+```
+base: str = "HEAD~1"
+changed_files: list[str] | None  # Auto-detected when omitted
+max_depth: int = 2
+max_results: int = 20            # Every evidence list; hard ceiling 50
+detail_level: str = "minimal"   # "standard" adds bounded review records
+repo_root: str | None
+```
+Returns one deterministic snapshot with freshness, changes, impact, affected
+journeys, direct/indirect tests, unattached files, and a content fingerprint.
 
 #### `query_graph_tool`
 ```
@@ -457,6 +470,11 @@ code-review-graph detect-changes --base HEAD~3 # Custom base ref
 code-review-graph detect-changes --brief       # Compact panel with token-savings estimate
 code-review-graph detect-changes --brief --verify  # ...and cross-check vs tiktoken
 code-review-graph detect-changes --churn       # Add opt-in change-frequency risk
+code-review-graph delivery-context             # Compact text delivery proof
+code-review-graph delivery-context --format json --base origin/main
+                                                # Machine-readable snapshot
+code-review-graph impact --max-results 20 --format text
+                                                # Bounded human-readable impact
 
 # detect-changes vs update --brief — which one?
 # • detect-changes --brief: read-only. Asks "what's the impact of my current

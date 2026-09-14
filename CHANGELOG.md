@@ -4,6 +4,14 @@
 
 ### Added
 
+- Added `delivery-context` and `get_delivery_context_tool`, a compact,
+  deterministic delivery snapshot combining graph freshness, changed files,
+  blast radius, affected journeys, direct/indirect test coverage, unattached
+  files, and a content fingerprint.
+- `status --json` now reports staged, unstaged, and untracked content freshness
+  with machine-readable `current`, `stale_head`, `stale_worktree`, or `unknown`
+  states.
+
 - Added `journeys-affected` for Git diffs and `journeys --from-file`,
   `--from-component`, and `--from-route` for focused workflow analysis.
 - Journey output now shows direct consumers, repositories, and tests first.
@@ -26,6 +34,10 @@
   incomplete paths instead of producing a false complete result.
 
 ### Fixed
+
+- `impact --max-results` now bounds changed files, changed nodes, impacted
+  nodes, impacted files, and edges in both JSON and compact text output while
+  retaining the untruncated totals.
 
 - Frontend requests assigned to local variables now resolve static class URL
   constants, restoring paths such as `OrganizationsPage` through
