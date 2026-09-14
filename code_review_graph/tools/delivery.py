@@ -69,9 +69,7 @@ def _proof_fingerprint(
         content_digest = hashlib.sha256()
         if path.is_symlink():
             content_digest.update(b"symlink\0")
-            content_digest.update(
-                str(path.readlink()).encode("utf-8", errors="surrogateescape")
-            )
+            content_digest.update(str(path.readlink()).encode("utf-8", errors="surrogateescape"))
         elif path.is_file():
             content_digest.update(b"file\0")
             try:
@@ -82,10 +80,12 @@ def _proof_fingerprint(
                 content_digest = hashlib.sha256(b"unreadable")
         else:
             content_digest.update(b"missing")
-        file_states.append({
-            "path": Path(relative).as_posix(),
-            "sha256": content_digest.hexdigest(),
-        })
+        file_states.append(
+            {
+                "path": Path(relative).as_posix(),
+                "sha256": content_digest.hexdigest(),
+            }
+        )
     material = {
         "schema_version": 1,
         "tool_version": __version__,
@@ -96,7 +96,10 @@ def _proof_fingerprint(
         "files": file_states,
     }
     encoded = json.dumps(
-        material, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        material,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest(), base_sha
 
@@ -106,6 +109,32 @@ def _format_test_item(root: Path, item: dict[str, Any]) -> dict[str, Any]:
         "name": item.get("name", ""),
         "classification": item.get("classification", "none"),
         "file": _relative(root, str(item.get("file", ""))),
+    }
+
+
+def _format_journey_detail(item: dict[str, Any], limit: int) -> dict[str, Any]:
+    """Keep review-relevant journey gaps without copying large path payloads."""
+    ambiguities = item.get("ambiguities", [])
+    incomplete = item.get("incomplete_paths", [])
+
+    def reasons(values: Any) -> list[str]:
+        if not isinstance(values, list):
+            return []
+        unique = dict.fromkeys(
+            str(value.get("reason", "unknown")) if isinstance(value, dict) else str(value)
+            for value in values
+        )
+        return list(unique)[:limit]
+
+    hidden = item.get("hidden", {})
+    return {
+        "id": item.get("id", ""),
+        "name": item.get("name", ""),
+        "domain": item.get("domain", ""),
+        "analysis_status": item.get("analysis_status", "unknown"),
+        "ambiguity_reasons": reasons(ambiguities),
+        "incomplete_path_reasons": reasons(incomplete),
+        "hidden": hidden if isinstance(hidden, dict) else {},
     }
 
 
@@ -126,16 +155,19 @@ def get_delivery_context(
     store, root = _get_store(repo_root)
     try:
         changed_files = sorted(
-            changed_files
-            if changed_files is not None
-            else get_all_changed_files(root, base)
+            changed_files if changed_files is not None else get_all_changed_files(root, base)
         )
         provenance = graph_provenance(str(root)) or {}
         fingerprint, base_sha = _proof_fingerprint(
-            root, base, changed_files, provenance,
+            root,
+            base,
+            changed_files,
+            provenance,
         )
         files, files_total, files_cut = _bounded(
-            changed_files, max_results, _MAX_DELIVERY_RESULTS,
+            changed_files,
+            max_results,
+            _MAX_DELIVERY_RESULTS,
         )
 
         if changed_files:
@@ -184,8 +216,11 @@ def get_delivery_context(
                 "truncated": False,
                 "journeys": [],
                 "changed_file_coverage": {
-                    "total": 0, "matched": 0, "unmatched": 0,
-                    "unmatched_files": [], "unmatched_files_hidden": 0,
+                    "total": 0,
+                    "matched": 0,
+                    "unmatched": 0,
+                    "unmatched_files": [],
+                    "unmatched_files_hidden": 0,
                 },
             }
 
@@ -202,7 +237,9 @@ def get_delivery_context(
         unattached = list(coverage.get("unmatched_files", []))
         unattached_total = int(coverage.get("unmatched", len(unattached)))
         unattached, _visible_unattached_total, unattached_cut = _bounded(
-            unattached, max_results, _MAX_DELIVERY_RESULTS,
+            unattached,
+            max_results,
+            _MAX_DELIVERY_RESULTS,
         )
         unattached_cut = (
             unattached_cut
@@ -212,13 +249,13 @@ def get_delivery_context(
 
         test_coverage = analysis.get("test_coverage", [])
         test_items, tests_total, tests_cut = _bounded(
-            test_coverage, max_results, _MAX_DELIVERY_RESULTS,
+            test_coverage,
+            max_results,
+            _MAX_DELIVERY_RESULTS,
         )
         changed_nodes = impact.get("changed_nodes", [])
         impacted_nodes = impact.get("impacted_nodes", [])
-        key_entities = [
-            node.name for node in [*changed_nodes, *impacted_nodes]
-        ]
+        key_entities = [node.name for node in [*changed_nodes, *impacted_nodes]]
         key_entities = list(dict.fromkeys(key_entities))[:5]
         freshness_state = provenance.get("freshness", "unknown")
         result: dict[str, Any] = {
@@ -243,9 +280,7 @@ def get_delivery_context(
             "impact": {
                 "risk_score": analysis.get("risk_score", 0.0),
                 "changed_nodes": len(changed_nodes),
-                "impacted_nodes": int(
-                    impact.get("total_impacted", len(impacted_nodes))
-                ),
+                "impacted_nodes": int(impact.get("total_impacted", len(impacted_nodes))),
                 "impacted_files": len(impact.get("impacted_files", [])),
                 "key_entities": key_entities,
             },
@@ -253,22 +288,16 @@ def get_delivery_context(
                 "total": int(journeys.get("total", 0)),
                 "items": journey_items,
                 "items_hidden": max(
-                    0, int(journeys.get("total", 0)) - len(journey_items),
+                    0,
+                    int(journeys.get("total", 0)) - len(journey_items),
                 ),
             },
             "tests": {
-                "direct": sum(
-                    item.get("classification") == "direct"
-                    for item in test_coverage
-                ),
+                "direct": sum(item.get("classification") == "direct" for item in test_coverage),
                 "indirect_only": sum(
-                    item.get("classification") == "indirect_only"
-                    for item in test_coverage
+                    item.get("classification") == "indirect_only" for item in test_coverage
                 ),
-                "none": sum(
-                    item.get("classification") == "none"
-                    for item in test_coverage
-                ),
+                "none": sum(item.get("classification") == "none" for item in test_coverage),
                 "items": [_format_test_item(root, item) for item in test_items],
                 "items_hidden": max(0, tests_total - len(test_items)),
             },
@@ -286,20 +315,31 @@ def get_delivery_context(
             },
             "fingerprint": fingerprint,
             "truncated": bool(
-                files_cut or tests_cut or unattached_cut
-                or journeys.get("truncated") or impact.get("truncated")
+                files_cut
+                or tests_cut
+                or unattached_cut
+                or journeys.get("truncated")
+                or impact.get("truncated")
             ),
         }
         if detail_level == "standard":
             result["details"] = {
                 "review_priorities": analysis.get("review_priorities", [])[
-                    :min(max_results, _MAX_DELIVERY_RESULTS)
+                    : min(max_results, _MAX_DELIVERY_RESULTS)
                 ],
                 "test_gaps": analysis.get("test_gaps", [])[
-                    :min(max_results, _MAX_DELIVERY_RESULTS)
+                    : min(max_results, _MAX_DELIVERY_RESULTS)
                 ],
                 "changed_functions": analysis.get("changed_functions", [])[
-                    :min(max_results, _MAX_DELIVERY_RESULTS)
+                    : min(max_results, _MAX_DELIVERY_RESULTS)
+                ],
+                "journeys": [
+                    _format_journey_detail(item, min(max_results, 10))
+                    for item in journeys.get("journeys", [])
+                    if isinstance(item, dict)
+                ],
+                "limitations": journeys.get("coverage", {}).get("limitations", [])[
+                    : min(max_results, _MAX_DELIVERY_RESULTS)
                 ],
             }
         return result
