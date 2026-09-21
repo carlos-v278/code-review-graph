@@ -376,6 +376,13 @@ code-review-graph eval             # Run evaluation benchmarks
 code-review-graph serve            # Start MCP server
 ```
 
+`delivery-context --format json` also reports unchanged frontend list/detail
+surfaces when a changed domain model or public DTO identifies the same routed
+business entity. Each candidate includes route, page, supporting
+service/composable/table evidence, and a pending decision contract. Related
+list/detail consistency and refresh-after-mutation checks are emitted without
+guessing the UI change to make.
+
 JSON exports stay inside the local graph data directory, which Git ignores by
 default. They can contain absolute paths and code-structure metadata, so inspect
 and sanitize an export before publishing it outside your machine.

@@ -515,6 +515,14 @@ code-review-graph serve --tools query_graph_tool,detect_changes_tool  # Tool all
 code-review-graph mcp                          # Alias for serve
 ```
 
+The JSON delivery snapshot contains `frontend_surfaces` when a changed domain
+model, enum, DTO, interface, or frontend type maps to unchanged routed list or
+detail pages. Candidates carry source evidence and a required decision with one
+of `adapted`, `inspected_no_change`, or `blocked`; the latter two require a
+justification. `required_checks` also calls out list/detail consistency and,
+for business-state changes, refresh after mutation. Implementation-only service
+changes do not create these checks.
+
 ## Standalone Daemon CLI (`crg-daemon`)
 
 The `crg-daemon` command is included with every `code-review-graph` installation — no

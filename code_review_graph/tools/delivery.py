@@ -10,8 +10,8 @@ from typing import Any
 
 from .. import __version__
 from ..changes import analyze_changes
+from ..frontend_surfaces import discover_frontend_surface_candidates
 from ..incremental import _SAFE_GIT_REF, get_all_changed_files
-from ..journeys import build_journeys
 from ..parser import normalize_file_path
 from ._common import (
     _bounded,
@@ -23,6 +23,13 @@ from ._common import (
 
 _MAX_DELIVERY_RESULTS = 50
 _GIT_TIMEOUT_SECONDS = 2.0
+
+
+def build_journeys(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """Import the journey builder lazily to avoid the tools package cycle."""
+    from ..journeys import build_journeys as build
+
+    return build(*args, **kwargs)
 
 
 def _git_commit(root: Path, ref: str) -> str | None:
@@ -255,6 +262,12 @@ def get_delivery_context(
         )
         changed_nodes = impact.get("changed_nodes", [])
         impacted_nodes = impact.get("impacted_nodes", [])
+        frontend_surfaces = discover_frontend_surface_candidates(
+            root,
+            store.get_all_edges(),
+            changed_files,
+            limit=min(max_results, _MAX_DELIVERY_RESULTS),
+        )
         key_entities = [node.name for node in [*changed_nodes, *impacted_nodes]]
         key_entities = list(dict.fromkeys(key_entities))[:5]
         freshness_state = provenance.get("freshness", "unknown")
@@ -306,6 +319,7 @@ def get_delivery_context(
                 "files": unattached,
                 "files_hidden": max(0, unattached_total - len(unattached)),
             },
+            "frontend_surfaces": frontend_surfaces,
             "proof": {
                 "base": base,
                 "base_sha": base_sha,
@@ -318,6 +332,9 @@ def get_delivery_context(
                 files_cut
                 or tests_cut
                 or unattached_cut
+                or frontend_surfaces.get("candidates_hidden", 0)
+                or frontend_surfaces.get("supporting_files_hidden", 0)
+                or frontend_surfaces.get("checks_hidden", 0)
                 or journeys.get("truncated")
                 or impact.get("truncated")
             ),
@@ -355,6 +372,7 @@ def format_delivery_context_text(result: dict[str, Any]) -> str:
     journeys = result.get("journeys", {})
     tests = result.get("tests", {})
     unattached = result.get("unattached_files", {})
+    frontend_surfaces = result.get("frontend_surfaces", {})
     lines = [
         result.get("summary", "Delivery context unavailable."),
         f"Freshness: {freshness.get('state', 'unknown')}",
@@ -367,7 +385,13 @@ def format_delivery_context_text(result: dict[str, Any]) -> str:
         f"{tests.get('indirect_only', 0)} indirect-only; "
         f"{tests.get('none', 0)} untested",
         f"Unattached files: {unattached.get('total', 0)}",
+        f"Frontend surface candidates: {frontend_surfaces.get('total', 0)}",
     ]
+    for candidate in frontend_surfaces.get("candidates", []):
+        lines.append(
+            f"  - {candidate.get('route', '?')} "
+            f"({candidate.get('kind', 'unknown')}) — {candidate.get('file', '?')}",
+        )
     for path in unattached.get("files", []):
         lines.append(f"  - {path}")
     if result.get("truncated"):

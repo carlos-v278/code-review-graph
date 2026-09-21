@@ -78,8 +78,10 @@ def test_delivery_context_is_compact_complete_and_stable(tmp_path):
         "journeys",
         "tests",
         "unattached_files",
+        "frontend_surfaces",
         "fingerprint",
     }
+    assert first["frontend_surfaces"]["total"] == 0
     assert len(first["fingerprint"]) == 64
     assert first["fingerprint"] == second["fingerprint"]
     assert len(json.dumps(first).encode("utf-8")) < 8_000
@@ -122,6 +124,7 @@ def test_delivery_context_cli_supports_text_and_json(tmp_path, capsys):
         cli.main()
     output = capsys.readouterr().out
     assert "Delivery context" in output
+    assert "Frontend surface candidates: 0" in output
     assert "Fingerprint:" in output
 
 
