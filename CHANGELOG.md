@@ -4,6 +4,9 @@
 
 ### Added
 
+- `delivery-context` now identifies unchanged routed frontend list/detail
+  surfaces affected by domain model or public contract changes, with bounded
+  evidence, explicit review decisions, and transverse consistency checks.
 - Added `delivery-context` and `get_delivery_context_tool`, a compact,
   deterministic delivery snapshot combining graph freshness, changed files,
   blast radius, affected journeys, direct/indirect test coverage, unattached
@@ -35,6 +38,8 @@
 
 ### Fixed
 
+- Delivery-context imports no longer create a circular dependency with journey
+  tooling during module initialization.
 - `impact --max-results` now bounds changed files, changed nodes, impacted
   nodes, impacted files, and edges in both JSON and compact text output while
   retaining the untruncated totals.
