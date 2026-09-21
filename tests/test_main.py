@@ -160,6 +160,7 @@ class TestLongRunningToolsAreAsync:
         "run_postprocess_tool",
         "embed_graph_tool",
         "detect_changes_tool",
+        "get_delivery_context_tool",
         "generate_wiki_tool",
     }
 
@@ -168,6 +169,7 @@ class TestLongRunningToolsAreAsync:
         "run_postprocess_tool": "run_postprocess",
         "embed_graph_tool": "embed_graph",
         "detect_changes_tool": "detect_changes_func",
+        "get_delivery_context_tool": "get_delivery_context",
         "generate_wiki_tool": "generate_wiki_func",
     }
 
@@ -336,6 +338,7 @@ class TestGraphBackedToolProvenanceCoverage:
         "build": {"build_or_update_graph_tool", "run_postprocess_tool"},
         "context_and_search": {
             "get_minimal_context_tool", "get_impact_radius_tool",
+            "get_delivery_context_tool",
             "query_graph_tool", "get_review_context_tool",
             "semantic_search_nodes_tool", "find_large_functions_tool",
             "traverse_graph_tool",

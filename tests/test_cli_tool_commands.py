@@ -144,3 +144,46 @@ def test_tool_command_missing_graph_exits_nonzero(tmp_path, monkeypatch, capsys)
 
     assert exc_info.value.code == 1
     assert "No graph found" in capsys.readouterr().err
+
+
+def test_impact_text_format_is_compact_and_bounded(
+    tmp_path, monkeypatch, capsys,
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "graph.db").touch()
+    monkeypatch.setenv("CRG_DATA_DIR", str(data_dir))
+    result = {
+        "status": "ok",
+        "summary": "Blast radius for 3 changed file(s)",
+        "changed_files": ["a.py"],
+        "changed_files_total": 3,
+        "changed_nodes": [{"name": "a"}],
+        "changed_nodes_total": 3,
+        "impacted_nodes": [{"name": "b"}],
+        "impacted_nodes_total": 3,
+        "impacted_files": ["b.py"],
+        "impacted_files_total": 3,
+        "edges": [{"kind": "CALLS"}],
+        "edges_total": 3,
+        "truncated": True,
+    }
+    argv = [
+        "code-review-graph", "impact", "--repo", str(repo),
+        "--max-results", "1", "--format", "text",
+    ]
+
+    with patch.object(sys, "argv", argv):
+        with patch(
+            "code_review_graph.tools.get_impact_radius",
+            return_value=result,
+        ):
+            cli.main()
+
+    output = capsys.readouterr().out
+    assert "Blast radius for 3 changed file(s)" in output
+    assert "showing 1 of 3" in output
+    assert len(output.encode("utf-8")) < 1_000

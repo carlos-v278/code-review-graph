@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ..graph import GraphStore
-from ..incremental import find_project_root, get_db_path
+from ..incremental import find_project_root, get_db_path, get_worktree_snapshot
 from ..parser import normalize_file_path
 
 _PROVENANCE_READ_TIMEOUT_SECONDS = 0.05
@@ -83,7 +83,8 @@ def graph_provenance(repo_root: str | None = None) -> dict[str, Any] | None:
         try:
             rows = dict(connection.execute(
                 "SELECT key, value FROM metadata WHERE key IN "
-                "('last_updated', 'git_branch', 'git_head_sha')"
+                "('last_updated', 'git_branch', 'git_head_sha', "
+                "'git_worktree_fingerprint', 'git_worktree_files_count')"
             ).fetchall())
         finally:
             connection.close()
@@ -117,6 +118,25 @@ def graph_provenance(repo_root: str | None = None) -> dict[str, Any] | None:
                 provenance["head_sha"] = live_head_sha
                 if isinstance(head_sha, str) and head_sha:
                     provenance["head_matches_build"] = live_head_sha == head_sha
+            built_fingerprint = rows.get("git_worktree_fingerprint")
+            if isinstance(built_fingerprint, str) and built_fingerprint:
+                snapshot = get_worktree_snapshot(root)
+                if snapshot["available"]:
+                    provenance["worktree_dirty"] = snapshot["dirty"]
+                    provenance["worktree_files_count"] = snapshot["files_count"]
+                    provenance["worktree_fingerprint"] = snapshot["fingerprint"]
+                    provenance["built_worktree_fingerprint"] = built_fingerprint
+                    provenance["worktree_matches_build"] = (
+                        snapshot["fingerprint"] == built_fingerprint
+                    )
+            head_matches = provenance.get("head_matches_build")
+            worktree_matches = provenance.get("worktree_matches_build")
+            provenance["freshness"] = (
+                "stale_head" if head_matches is False
+                else "stale_worktree" if worktree_matches is False
+                else "current" if head_matches is True and worktree_matches is True
+                else "unknown"
+            )
         return provenance or None
     except Exception:
         return None

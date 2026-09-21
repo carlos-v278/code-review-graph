@@ -1,6 +1,6 @@
 """MCP tool definitions for the Code Review Graph server.
 
-Exposes 27 tools:
+Exposes 29 tools:
 1. build_or_update_graph  - full or incremental build
 2. get_impact_radius      - blast radius from changed files
 3. query_graph            - predefined graph queries
@@ -29,6 +29,7 @@ Exposes 27 tools:
 26. get_surprising_connections - find unexpected architectural coupling
 27. get_suggested_questions - auto-generated review questions from graph analysis
 28. traverse_graph        - BFS/DFS traversal from best-matching node
+29. get_delivery_context  - compact deterministic delivery evidence
 """
 
 from __future__ import annotations
@@ -73,6 +74,9 @@ from .community_tools import (
 
 # -- context ----------------------------------------------------------------
 from .context import get_minimal_context
+
+# -- delivery ---------------------------------------------------------------
+from .delivery import format_delivery_context_text, get_delivery_context
 
 # -- docs -------------------------------------------------------------------
 from .docs import embed_graph, generate_wiki_func, get_docs_section, get_wiki_page_func
@@ -123,6 +127,9 @@ __all__ = [
     "generate_wiki_func",
     "get_docs_section",
     "get_wiki_page_func",
+    # delivery
+    "format_delivery_context_text",
+    "get_delivery_context",
     # flows_tools
     "get_flow",
     "list_flows",

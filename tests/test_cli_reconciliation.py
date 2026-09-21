@@ -67,6 +67,7 @@ def test_status_json_is_the_only_stdout_and_includes_current_sha(capsys):
     store.get_metadata.side_effect = {
         "git_branch": "main",
         "git_head_sha": "old-sha",
+        "git_worktree_fingerprint": "built-worktree",
         "svn_revision": None,
         "svn_branch": None,
     }.get
@@ -82,11 +83,21 @@ def test_status_json_is_the_only_stdout_and_includes_current_sha(capsys):
                     "code_review_graph.incremental.detect_vcs",
                     return_value="git",
                 ):
-                    with patch(
-                        "code_review_graph.incremental._git_branch_info",
-                        return_value=("feature", "current-sha"),
-                    ):
-                        cli.main()
+                        with patch(
+                            "code_review_graph.incremental._git_branch_info",
+                            return_value=("feature", "current-sha"),
+                        ):
+                            with patch(
+                                "code_review_graph.incremental.get_worktree_snapshot",
+                                return_value={
+                                    "available": True,
+                                    "dirty": True,
+                                    "files": ["app.py"],
+                                    "files_count": 1,
+                                    "fingerprint": "current-worktree",
+                                },
+                            ):
+                                cli.main()
 
     output = capsys.readouterr().out
     payload = json.loads(output)
@@ -101,6 +112,12 @@ def test_status_json_is_the_only_stdout_and_includes_current_sha(capsys):
         "built_at_commit": "old-sha",
         "current_branch": "feature",
         "current_sha": "current-sha",
+        "freshness": "stale_head",
+        "head_matches_build": False,
+        "worktree_dirty": True,
+        "worktree_files_count": 1,
+        "worktree_fingerprint": "current-worktree",
+        "worktree_matches_build": False,
         "svn_branch": None,
         "svn_revision": None,
     }

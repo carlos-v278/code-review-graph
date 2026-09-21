@@ -189,9 +189,6 @@ HUGE = 10**6
 # Tools whose result lists live in code_review_graph/tools/query.py. That
 # module is owned elsewhere and its unbounded worst cases are reported, not
 # fixed, by this change:
-#   * get_impact_radius  -- changed_nodes and edges ignore max_results
-#     (3.4M tokens on a whole-repo diff), and max_results is not even
-#     exposed on the MCP tool signature.
 #   * find_large_functions -- limit is neither validated nor capped
 #     (737k tokens at limit=10**6).
 #   * traverse_graph -- token_budget is neither validated nor capped
@@ -200,7 +197,6 @@ HUGE = 10**6
 # Their *default* budgets are still asserted below; only the worst case is
 # skipped, so a regression in normal use is still caught here.
 QUERY_OWNED_UNBOUNDED = {
-    "get_impact_radius_tool",
     "find_large_functions_tool",
     "traverse_graph_tool",
     "semantic_search_nodes_tool",
@@ -238,12 +234,26 @@ BUDGETS: dict[str, dict[str, Any]] = {
     },
     "get_impact_radius_tool": {
         "default": {"changed_files": "LEAF"},
-        "worst": {"changed_files": "ALL", "max_depth": 5},
-        # Higher than it should be: changed_nodes and edges ignore
-        # max_results in query.py, so even a single-file default grows with
-        # the graph. Reported, not fixed here.
+        "worst": {
+            "changed_files": "ALL", "max_depth": 5,
+            "max_results": HUGE,
+        },
         "default_max": 12_000,
-        "worst_max": None,  # see QUERY_OWNED_UNBOUNDED
+        "worst_max": 50_000,
+    },
+    "get_delivery_context_tool": {
+        "default": {
+            "changed_files": "LEAF",
+            "max_results": 20,
+        },
+        "worst": {
+            "changed_files": "ALL",
+            "max_depth": 5,
+            "max_results": HUGE,
+            "detail_level": "standard",
+        },
+        "default_max": 8_000,
+        "worst_max": 50_000,
     },
     "query_graph_tool": {
         "default": {"pattern": "callers_of", "target": "helper_0_0_0"},

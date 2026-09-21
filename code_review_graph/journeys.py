@@ -87,11 +87,12 @@ def _provenance(store: GraphStore, root: Path) -> dict[str, Any]:
         value = store.get_metadata(key)
         if field not in result and value:
             result[field] = value
-    current = result.get("head_matches_build")
-    result["freshness"] = (
-        "current" if current is True else "stale" if current is False
-        else "unknown"
-    )
+    if "freshness" not in result:
+        current = result.get("head_matches_build")
+        result["freshness"] = (
+            "current" if current is True else "stale_head" if current is False
+            else "unknown"
+        )
     return result
 
 

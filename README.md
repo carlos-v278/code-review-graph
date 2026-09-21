@@ -363,6 +363,7 @@ code-review-graph visualize --format obsidian  # Export as Obsidian vault
 code-review-graph visualize --format cypher    # Export as Neo4j Cypher
 code-review-graph wiki             # Generate markdown wiki from communities
 code-review-graph detect-changes --brief         # Risk panel + token savings (read-only)
+code-review-graph delivery-context               # Compact deterministic delivery proof
 code-review-graph update --brief                 # Refresh graph + same panel
 code-review-graph detect-changes --brief --verify  # Cross-check vs tiktoken
 code-review-graph register <path>  # Register repo in multi-repo registry
@@ -463,7 +464,7 @@ full config reference and all available options.
 </details>
 
 <details>
-<summary><strong>30 MCP tools</strong></summary>
+<summary><strong>31 MCP tools</strong></summary>
 <br>
 
 Your AI assistant uses these automatically once the graph is built.
@@ -474,6 +475,7 @@ Your AI assistant uses these automatically once the graph is built.
 | `run_postprocess_tool` | Re-run flow detection, community detection, and FTS indexing |
 | `get_minimal_context_tool` | Ultra-compact context (~100 tokens) — call this first |
 | `get_impact_radius_tool` | Blast radius of changed files |
+| `get_delivery_context_tool` | Compact deterministic delivery evidence and fingerprint |
 | `get_review_context_tool` | Token-optimised review context with structural summary |
 | `query_graph_tool` | Callers, callees, tests, imports, inheritance queries |
 | `traverse_graph_tool` | BFS/DFS traversal from any node with token budget |
